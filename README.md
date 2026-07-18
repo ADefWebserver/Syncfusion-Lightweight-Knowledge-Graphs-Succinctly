@@ -53,7 +53,7 @@ for the full design.
 - Edge types: `REQUESTED_BY`, `HAS_DETAIL`, `HAS_STATUS`, `OCCURRED_ON`, plus
   `LINKED_TO`, `REFERENCES_ARTICLE`, `RESOLVED_BY` in the knowledge layer.
 - The graph is stored under **App_Data/graph** as `graph.json`, `manifest.json`,
-  `metadata.json`, and an `audit.log`. The schema specs live in the **specs/** folder.
+  `metadata.json`, and an `audit.log`.
 
 ### To Configure the Graph AI Assistant
 

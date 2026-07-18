@@ -30,10 +30,10 @@ to come first because the later Cytoscape visualization and AI chat features wil
 read from these files. The graph format itself should require only three small C#
 classes and no third-party graph library.
 
-Begin with two Markdown schema documents in a specs folder. specs/entities.md should
-describe each node type, its database source, important properties, and ID rule.
-specs/edges.md should describe each edge type, its direction, meaning, and validation
-rules. IDs must be lowercase, stable across rebuilds, and follow <type>:<key>:
+Begin by documenting the graph schema in the plan itself. Describe each node type,
+its database source, important properties, and ID rule, and each edge type, its
+direction, meaning, and validation rules. IDs must be lowercase, stable across
+rebuilds, and follow <type>:<key>:
 
 - Ticket uses ticket:<n>. Its data contains status, ticketDate, requesterEmail, and
    ticketGuid, and its label is the first 60 characters of the description.
