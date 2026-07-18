@@ -1,0 +1,103 @@
+Task:
+Create a Markdown file and save it in the docs/ directory. Actually create the file
+The file should contain a detailed, structured plan for implementing the following features
+(I will list them after this instruction).
+Requirements:
+Use clear section headings.
+Include Mermaid diagrams to illustrate both system structure and process flows.
+Do not put \n inside Mermaid node labels because VS Code's Mermaid renderer doesn't support that.
+Avoid edge labels like "1. User clicks AI"
+because Mermaid's renderer interprets 1. as a markdown numbered list inside the label.
+Provide enough detail that a developer could begin implementing the features
+based on this document alone.
+Use Markdown formatting throughout.
+Do not include any file‑system commands; simply output the Markdown content.
+Output Format:
+Return only the contents of the .md file, starting with a top‑level # heading.
+Features to document:
+
+Feature: The Knowledge Graph text files (the file-based graph storage layer).
+
+Context:
+This is an existing ASP.NET Core / Blazor Server help-desk application
+(SyncfusionHelpDesk) that stores tickets in a SQL Server database through Entity
+Framework Core. The models already present include HelpDeskTicket (Id,
+TicketDescription, TicketStatus, TicketDate, TicketRequesterEmail, TicketGuid) and
+HelpDeskTicketDetail (Id, TicketDescription, TicketDetailDate) exposed through
+SyncfusionHelpDeskContext. There is NO graph engine and NO graph database. The goal
+of this first feature is to derive a lightweight knowledge graph from the existing
+database and persist it as plain text (JSON) files on disk. Every later feature (the
+Cytoscape visualization page, and the AI chat) reads from these files, so this layer
+must be built first.
+
+Goal:
+Add a file-based knowledge graph that is built from the live help-desk database and
+saved as human-readable text files under App_Data/graph. No third-party graph library
+is used. The entire format is three small C# classes plus deterministic build code.
+
+What to document and design:
+
+1. Schema specification (author as Markdown spec files under a specs/ folder):
+   - specs/entities.md: the node types, their source, key properties, and id rules.
+   - specs/edges.md: the edge types, direction (From -> To), meaning, and rules.
+   Node types and id conventions (id format is <type>:<key>, lowercased, and must be
+   stable across rebuilds):
+   - Ticket        id ticket:<n>           props: status, ticketDate, requesterEmail, ticketGuid; label = first 60 chars of description
+   - TicketDetail  id detail:<n>           props: ticketDetailDate, snippet (first 200 chars)
+   - Requester     id requester:<email>    one per distinct case-insensitive TicketRequesterEmail
+   - Status        id status:<status>      one per distinct case-insensitive TicketStatus
+   - Day           id day:<yyyy-MM-dd>     one per distinct calendar day on a ticket or detail
+   Edge types (labels are UPPER_SNAKE_CASE; node labels are PascalCase):
+   - REQUESTED_BY  Ticket -> Requester
+   - HAS_DETAIL    Ticket -> TicketDetail   (carries detailDate)
+   - HAS_STATUS    Ticket -> Status
+   - OCCURRED_ON   Ticket -> Day and TicketDetail -> Day   (carries date)
+   Rules to state explicitly: both endpoints of an edge must exist or the edge is
+   skipped and counted in a build report; database-derived nodes are read-only.
+
+2. The graph data model (three classes, no engine):
+   - GraphDocument: Version, GeneratedUtc, List<GraphNode> Nodes, List<GraphEdge> Edges.
+   - GraphNode: Id, Type, Label, Dictionary<string, object?> Data.
+   - GraphEdge: From, To, Type, Dictionary<string, object?> Data.
+
+3. The on-disk files (written under App_Data/graph):
+   - graph.json    - the serialized GraphDocument (nodes + edges).
+   - manifest.json - lightweight counts and timestamps (node/edge counts by type,
+                     LastBuildUtc, LastMutationUtc).
+   - metadata.json - domain description plus a node-label and edge-label glossary.
+   - audit.log     - append-only log (used later when mutations are added).
+   Use a camelCase JSON naming policy and indented output.
+
+4. The builder and file writer:
+   - HelpDeskGraphBuilder: reads the database via IDbContextFactory<SyncfusionHelpDeskContext>
+     (AsNoTracking, Include details), emits ALL nodes before ANY edges, de-duplicates
+     nodes by id with a HashSet, validates edge endpoints against the node set, tracks a
+     LastSkippedEdges count as a build report, then writes graph.json / manifest.json /
+     metadata.json.
+   - GraphFile: static helpers for atomic writes (write to a .tmp file then File.Move
+     with overwrite so a crash mid-write can never corrupt graph.json), path resolution,
+     and load. Include WriteManifestAsync and WriteMetadataAsync.
+   - GraphOptions: binds the "Graph" configuration section; OutputPath defaults to
+     App_Data/graph.
+
+5. The in-memory store:
+   - GraphStore: a singleton that loads graph.json and builds four indexes (by id,
+     by type, outgoing edges by From, incoming edges by To) so a traversal is an
+     O(1) lookup plus a short walk. Expose GetNode, NodesOfType, OutEdges, InEdges,
+     NodeTypes, and a ReloadAsync that re-reads the file and reindexes.
+
+6. Dependency injection and startup (Program.cs):
+   - Configure<GraphOptions>("Graph"), register HelpDeskGraphBuilder (scoped) and
+     GraphStore (singleton), ensure the output directory exists at startup, and call
+     GraphStore.ReloadAsync() once so any existing snapshot loads into memory.
+
+Diagrams to include:
+- A structure diagram showing Database -> HelpDeskGraphBuilder -> graph files -> GraphStore.
+- A process-flow diagram of a build: read tickets, emit nodes, validate and emit edges,
+  write files atomically, reload the store.
+
+Acceptance criteria to list:
+- Rebuilding the graph produces identical ids for unchanged data.
+- graph.json, manifest.json, and metadata.json are all written on every build.
+- Edges with a missing endpoint are skipped and reflected in the skipped-edge count.
+- Database-derived nodes are treated as read-only.

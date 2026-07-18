@@ -1,0 +1,127 @@
+Task:
+Create a Markdown file and save it in the docs/ directory. Actually create the file
+The file should contain a detailed, structured plan for implementing the following features
+(I will list them after this instruction).
+Requirements:
+Use clear section headings.
+Include Mermaid diagrams to illustrate both system structure and process flows.
+Do not put \n inside Mermaid node labels because VS Code's Mermaid renderer doesn't support that.
+Avoid edge labels like "1. User clicks AI"
+because Mermaid's renderer interprets 1. as a markdown numbered list inside the label.
+Provide enough detail that a developer could begin implementing the features
+based on this document alone.
+Use Markdown formatting throughout.
+Do not include any file‑system commands; simply output the Markdown content.
+Output Format:
+Return only the contents of the .md file, starting with a top‑level # heading.
+Features to document:
+
+Feature: The read-only Graph Chat assistant (Components/Pages/GraphChat.razor).
+
+Context:
+The application already has a file-based knowledge graph loaded into a singleton
+GraphStore (node types Ticket, TicketDetail, Requester, Status, Day; edges
+REQUESTED_BY, HAS_DETAIL, HAS_STATUS, OCCURRED_ON). This feature adds an AI chat page
+that answers relationship questions about that graph. The assistant must be strictly
+read-only: it answers ONLY from deterministic graph traversals exposed as tools, and
+never invents ticket numbers, emails, counts, statuses, or dates. Use the
+Microsoft.Extensions.AI abstractions (IChatClient with automatic function/tool
+invocation) and the Syncfusion Blazor AI AssistView (SfAIAssistView) for the UI.
+
+Goal:
+Build a chat page at route /graphchat where a user asks natural-language questions
+("How many tickets has this email opened?", "List the open tickets", "Show graph
+statistics") and gets answers grounded entirely in graph tool calls.
+
+What to document and design:
+
+1. The provider-agnostic chat client (Services/AI/ChatClientFactory.cs):
+   - A static Create(IConfiguration aiSection) that reads a "Provider" value (default
+     OpenAI), builds the matching IChatClient (start with an OpenAIClient using the AI
+     section's ApiKey and Model, defaulting the model when unset), and wires
+     .AsBuilder().UseFunctionInvocation().Build() so tools are called automatically
+     during the chat round trips.
+   - Allow an empty/unconfigured key so the app still starts and the page renders; real
+     calls then fail with a clear authentication error that the page surfaces.
+   - Note that this "AI" configuration section is independent of the existing "OpenAI"
+     section that drives the Syncfusion Smart Components.
+
+2. The read-only tool contract and implementation
+   (Services/AI/GraphTools/IGraphChatTools.cs and GraphChatTools.cs):
+   - Deterministic traversals over GraphStore, each decorated with a [Description]
+     attribute so the tool schema the model sees is generated from the method
+     signatures. Every list-returning tool takes a max so the model cannot flood its
+     context window.
+   - Tools: FindRequesterByEmail(query, max), CountTicketsForRequester(email),
+     ListTicketsForRequester(email, status, max), ListDetailsForTicket(ticketId, max),
+     SearchNodes(query, type, max), GetNode(id), GetNeighbors(id, edgeType, max),
+     Stats(). All are read-only.
+   - Return small DTOs (NodeSummary, NodeDetail, Neighbor, TicketSummary,
+     CommentSummary, RequesterSummary, GraphStats) rather than raw nodes, so the model
+     never sees database rows, only the results of graph walks.
+
+3. Tool registration (Services/AI/GraphTools/GraphToolRegistration.cs):
+   - A static CreateTools(IGraphChatTools) that wraps each method with
+     AIFunctionFactory.Create(...) and returns an IList<AITool>.
+
+4. The system prompt (Services/AI/GraphTools/GraphSystemPrompt.cs):
+   - A constant string that describes the graph's node and edge types and id
+     conventions, lists the available tools, and lays down the rules: always base
+     numbers on tool results; resolve a person with FindRequesterByEmail first; prefer
+     the specific tools over generic search; if a tool returns nothing, say so; keep
+     answers concise and reference the tickets or requesters found.
+
+5. The chat page (Components/Pages/GraphChat.razor):
+   - @page "/graphchat"; inject IChatClient and IGraphChatTools.
+   - Host a Syncfusion SfAIAssistView with a few PromptSuggestions and a
+     PromptRequested handler.
+   - Keep a ChatMessage history seeded with a System message = GraphSystemPrompt.Text.
+   - On each prompt: add the user message, call
+     ChatClient.GetResponseAsync(history, new ChatOptions { Tools =
+     GraphToolRegistration.CreateTools(GraphTools) }), append the response to history,
+     and return response.Text (or a friendly fallback when empty).
+   - Wrap the call in try/catch and, on failure, show a message telling the user to
+     confirm the AI provider key is set in the "AI" configuration section.
+
+6. Dependency injection (Program.cs):
+   - Register IChatClient via ChatClientFactory.Create(config.GetSection("AI")) and
+     register IGraphChatTools -> GraphChatTools.
+
+7. Main-menu integration (the sidebar icon MUST render):
+   - Add a link to the left navigation in Components/Layout/NavMenu.razor, inside the
+     <Authorized> block, for example:
+       <div class="nav-item px-3">
+           <NavLink class="nav-link" href="graphchat">
+               <span class="bi bi-chat-dots-fill-nav-menu" aria-hidden="true"></span> Graph Assistant
+           </NavLink>
+       </div>
+   - CRITICAL: this project does NOT load the Bootstrap Icons web font. The sidebar
+     glyphs are drawn from inline SVG data-URI background images defined in
+     Components/Layout/NavMenu.razor.css. A <span class="bi bi-xxx-nav-menu"> whose class
+     has no matching rule in that CSS file renders as an EMPTY BOX. Therefore you MUST
+     also add a matching .bi-chat-dots-fill-nav-menu class to NavMenu.razor.css: copy an
+     existing icon rule in that file as a template and replace its SVG markup with the
+     official Bootstrap Icons "chat-dots-fill" SVG, URL-encoded, so the icon is
+     self-contained (no external font or file needed).
+   - Rule of thumb to state in the plan: never emit a <span class="bi bi-..."> without
+     adding its matching data-URI class in NavMenu.razor.css, and never assume a
+     Bootstrap Icons font is loaded.
+
+Diagrams to include:
+- A structure diagram: GraphChat.razor -> IChatClient (Microsoft.Extensions.AI, with
+  UseFunctionInvocation) -> graph tools -> GraphStore -> graph files.
+- A process-flow diagram of one question: user prompt, model decides to call a tool,
+  tool traverses GraphStore, result returns to the model, model composes a grounded
+  answer, page displays it. Label the tool round trip carefully (avoid starting an edge
+  label with a number and a period).
+
+Acceptance criteria to list:
+- Every factual claim in an answer is backed by a tool call; the assistant never
+  fabricates ids, counts, or dates.
+- Asking about a person resolves them by email first, then reports their tickets.
+- "Show graph statistics" returns counts by node and edge type from Stats().
+- With no provider key configured, the page still loads and shows a clear error when a
+  prompt is sent.
+- The Graph Assistant link appears in the sidebar with a visible chat icon (not an
+  empty box), because a matching .bi-chat-dots-fill-nav-menu rule exists in
+  NavMenu.razor.css.

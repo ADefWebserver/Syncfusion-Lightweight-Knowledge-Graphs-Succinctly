@@ -1,0 +1,120 @@
+Task:
+Create a Markdown file and save it in the docs/ directory. Actually create the file
+The file should contain a detailed, structured plan for implementing the following features
+(I will list them after this instruction).
+Requirements:
+Use clear section headings.
+Include Mermaid diagrams to illustrate both system structure and process flows.
+Do not put \n inside Mermaid node labels because VS Code's Mermaid renderer doesn't support that.
+Avoid edge labels like "1. User clicks AI"
+because Mermaid's renderer interprets 1. as a markdown numbered list inside the label.
+Provide enough detail that a developer could begin implementing the features
+based on this document alone.
+Use Markdown formatting throughout.
+Do not include any file‑system commands; simply output the Markdown content.
+Output Format:
+Return only the contents of the .md file, starting with a top‑level # heading.
+Features to document:
+
+Feature: The Knowledge Graph Visualization page (Components/Pages/Graph.razor).
+
+Context:
+The application already has a file-based knowledge graph loaded into a singleton
+GraphStore (nodes and edges with types Ticket, TicketDetail, Requester, Status, Day,
+and edges REQUESTED_BY, HAS_DETAIL, HAS_STATUS, OCCURRED_ON). This feature adds an
+interactive Blazor Server page that renders that graph visually in the browser using
+Cytoscape.js through JavaScript interop. Assume GraphStore and HelpDeskGraphBuilder
+already exist and are registered in DI.
+
+Goal:
+Build an interactive graph explorer at route /graph that draws the knowledge graph,
+lets the user filter by node type, click a node to inspect its properties and
+neighbors, and rebuild the graph from the current database, all without a page
+reload.
+
+What to document and design:
+
+1. The JavaScript renderer (wwwroot/js/graph-renderer.js):
+   - Load Cytoscape.js (wwwroot/js/cytoscape.min.js) and reference it from the app host.
+   - A node-type style map giving each type a distinct color and shape
+     (Ticket = blue round-rectangle, TicketDetail = green ellipse, Requester = red
+     ellipse, Status = orange diamond, Day = teal rectangle).
+   - Edge styling with a label, arrowhead, and bezier curve style; a :selected style.
+   - A "cose" force-directed layout with animation.
+   - Exported functions callable from Blazor: initCytoscape(containerId, graphData,
+     dotNetRef), updateGraph(containerId, graphData), destroyCytoscape(containerId),
+     and toggleFullScreen(containerId). initCytoscape wires a node tap handler that
+     calls back into .NET (OnNodeClicked) and a background tap that clears selection.
+
+2. The Blazor page (Components/Pages/Graph.razor):
+   - @page "/graph", @rendermode InteractiveServer, @implements IAsyncDisposable.
+   - Inject IJSRuntime, GraphStore, and HelpDeskGraphBuilder.
+   - Toolbar: a Rebuild Graph button (disabled while busy), badges showing node and
+     edge counts, the generated timestamp, and a Full Screen toggle.
+   - Entity-type checkboxes ("Show:") built from GraphStore.NodeTypes. Default the
+     visible set to the connected core (Ticket + Requester + Status) and let the user
+     toggle the busier types (TicketDetail, Day) on; fall back to showing all types if
+     none of the defaults are present.
+   - A #cy container div sized to the viewport, plus a detail panel that appears when a
+     node is selected showing its label, type, all Data properties, and a list of
+     connected nodes with the relationship label.
+
+3. The interop and data shaping:
+   - BuildGraphData(): project only nodes whose type is visible, and only edges whose
+     both endpoints are visible, into a shape of { nodes:[{id,label,type}],
+     edges:[{id,source,target,label}] } that the renderer expects.
+   - OnAfterRenderAsync(firstRender): on first render, create a DotNetObjectReference
+     and call initCytoscape.
+   - [JSInvokable] OnNodeClicked(nodeId): look the node up in GraphStore, populate the
+     detail panel metadata, and gather neighbors from OutEdges and InEdges.
+   - ToggleType: update the visible set, dismiss the panel, and call updateGraph
+     (re-render without re-initializing).
+   - RebuildAsync: call HelpDeskGraphBuilder.BuildAsync(), GraphStore.ReloadAsync(),
+     refresh the type list, and re-initialize the diagram.
+   - DisposeAsync: call destroyCytoscape and dispose the DotNetObjectReference; swallow
+     JSDisconnectedException when the circuit is already gone.
+
+4. Configuration note:
+   - Large graphs can produce big interop payloads, so raise the SignalR hub message
+     size limit in Program.cs (AddInteractiveServerComponents / HubOptions
+     MaximumReceiveMessageSize) so a big graph does not drop the circuit.
+
+5. Main-menu integration (the sidebar icon MUST render):
+   - Add a link to the left navigation in Components/Layout/NavMenu.razor, inside the
+     <Authorized> block, for example:
+       <div class="nav-item px-3">
+           <NavLink class="nav-link" href="graph">
+               <span class="bi bi-diagram-3-fill-nav-menu" aria-hidden="true"></span> Knowledge Graph
+           </NavLink>
+       </div>
+   - CRITICAL: this project does NOT load the Bootstrap Icons web font. The sidebar
+     glyphs are drawn from inline SVG data-URI background images defined in
+     Components/Layout/NavMenu.razor.css. A <span class="bi bi-xxx-nav-menu"> whose class
+     has no matching rule in that CSS file renders as an EMPTY BOX. Therefore you MUST
+     also add a matching .bi-diagram-3-fill-nav-menu class to NavMenu.razor.css: copy an
+     existing icon rule in that file as a template and replace its SVG markup with the
+     official Bootstrap Icons "diagram-3-fill" SVG, URL-encoded, so the icon is
+     self-contained (no external font or file needed).
+   - Rule of thumb to state in the plan: never emit a <span class="bi bi-..."> without
+     adding its matching data-URI class in NavMenu.razor.css, and never assume a
+     Bootstrap Icons font is loaded.
+
+Diagrams to include:
+- A structure diagram: Graph.razor (Blazor Server) <-> IJSRuntime interop <->
+  graph-renderer.js (Cytoscape.js), with GraphStore as the data source and
+  HelpDeskGraphBuilder as the rebuild source.
+- A sequence/process-flow diagram of a node click: user taps a node, Cytoscape fires
+  the handler, JS calls OnNodeClicked over interop, Blazor reads GraphStore and renders
+  the detail panel.
+- A process-flow diagram of Rebuild: build from database, reload store, re-init diagram.
+
+Acceptance criteria to list:
+- The page renders the current graph on load and shows accurate node and edge counts.
+- Toggling a node type immediately shows or hides those nodes and their edges.
+- Clicking a node shows its properties and its connected nodes; clicking the background
+  clears the selection.
+- Rebuild regenerates the graph from the database and redraws without a page reload.
+- Leaving the page disposes the Cytoscape instance and interop reference cleanly.
+- The Knowledge Graph link appears in the sidebar with a visible graph icon (not an
+  empty box), because a matching .bi-diagram-3-fill-nav-menu rule exists in
+  NavMenu.razor.css.

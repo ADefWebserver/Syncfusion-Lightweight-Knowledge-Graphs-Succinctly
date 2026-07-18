@@ -1,0 +1,23 @@
+{
+  "domain": "Help-desk knowledge graph: tickets, their work-log details, and the requesters who opened them, plus an optional knowledge layer (linked tickets, knowledge articles, and resolutions).",
+  "nodeLabels": {
+    "Ticket": "A help-desk ticket.",
+    "TicketDetail": "A work-log/comment entry on a ticket.",
+    "Requester": "An email address that opened tickets.",
+    "Status": "A distinct ticket status value.",
+    "Day": "A calendar day a ticket was opened or a detail was logged.",
+    "KnowledgeArticle": "A knowledge-base article (graph-only).",
+    "Resolution": "A record of how a ticket was resolved (graph-only)."
+  },
+  "edgeLabels": {
+    "REQUESTED_BY": "Ticket -> Requester",
+    "HAS_DETAIL": "Ticket -> TicketDetail",
+    "HAS_STATUS": "Ticket -> Status",
+    "OCCURRED_ON": "Ticket -> Day and TicketDetail -> Day",
+    "LINKED_TO": "Ticket -> Ticket (duplicate or related)",
+    "REFERENCES_ARTICLE": "Ticket -> KnowledgeArticle",
+    "RESOLVED_BY": "Ticket -> Resolution"
+  },
+  "nodeCount": 663,
+  "edgeCount": 1036
+}
