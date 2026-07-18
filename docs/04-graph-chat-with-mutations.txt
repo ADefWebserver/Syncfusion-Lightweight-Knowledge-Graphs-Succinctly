@@ -42,7 +42,7 @@ What to document and design:
      database-derived nodes (Ticket, TicketDetail, Requester, Status, Day) remain
      strictly read-only.
 
-2. The mutations specification (specs/mutations.md):
+2. The mutations specification:
    - Every mutation tool has the signature pattern
      MutationResult Name(args, bool confirmed = false).
    - When confirmed == false the tool changes NOTHING and returns a MutationResult
@@ -102,32 +102,3 @@ What to document and design:
 7. Dependency injection (Program.cs):
    - Register GraphMutationService (scoped) and IGraphWriteTools -> GraphWriteTools,
      and pass both the read and write tools into the chat's tool list.
-
-8. Main-menu integration:
-   - This feature extends the existing /graphchat page, so the "Graph Assistant" sidebar
-     link and its icon were already added with the read-only chat (feature 3); no new
-     menu item is required here. If the entry is not yet present, add it in
-     Components/Layout/NavMenu.razor and, because this template does NOT load a Bootstrap
-     Icons web font, also add the matching inline SVG data-URI class
-     .bi-chat-dots-fill-nav-menu to Components/Layout/NavMenu.razor.css so the icon
-     renders instead of showing an empty box. Never emit a <span class="bi bi-..."> that
-     has no matching data-URI rule in NavMenu.razor.css.
-
-Diagrams to include:
-- A structure diagram: GraphChat.razor -> IChatClient -> read tools + the single write
-  tool -> GraphMutationService (sole writer) -> graph files + audit.log, with
-  MutationApproval.razor gating the confirm step and GraphStore reloaded after a write.
-- A two-phase-commit process-flow diagram: model proposes a change, service returns a
-  preview (nothing written), approval dialog shown, on approve the service validates and
-  writes atomically then updates the manifest and audit log, on reject nothing changes.
-  Keep edge labels from starting with a number and a period.
-
-Acceptance criteria to list:
-- A preview call (confirmed == false) never writes to disk.
-- No change is applied until the human clicks Approve in the dialog.
-- Database-derived nodes cannot be edited; such attempts are rejected with a clear
-  message.
-- Duplicate LINKED_TO and REFERENCES_ARTICLE edges are rejected; DeleteArticle is
-  rejected while an article is still referenced unless cascade is set.
-- Every applied mutation writes graph.json and manifest.json atomically and appends one
-  line to audit.log.

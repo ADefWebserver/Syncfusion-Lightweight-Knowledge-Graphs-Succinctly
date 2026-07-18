@@ -51,7 +51,7 @@ What to document and design:
    - Inject IJSRuntime, GraphStore, and HelpDeskGraphBuilder.
    - Toolbar: a Rebuild Graph button (disabled while busy), badges showing node and
      edge counts, the generated timestamp, and a Full Screen toggle.
-   - Entity-type checkboxes ("Show:") built from GraphStore.NodeTypes. Default the
+   - Entity-type checkboxes built from GraphStore.NodeTypes. Default the
      visible set to the connected core (Ticket + Requester + Status) and let the user
      toggle the busier types (TicketDetail, Day) on; fall back to showing all types if
      none of the defaults are present.
@@ -78,43 +78,3 @@ What to document and design:
    - Large graphs can produce big interop payloads, so raise the SignalR hub message
      size limit in Program.cs (AddInteractiveServerComponents / HubOptions
      MaximumReceiveMessageSize) so a big graph does not drop the circuit.
-
-5. Main-menu integration (the sidebar icon MUST render):
-   - Add a link to the left navigation in Components/Layout/NavMenu.razor, inside the
-     <Authorized> block, for example:
-       <div class="nav-item px-3">
-           <NavLink class="nav-link" href="graph">
-               <span class="bi bi-diagram-3-fill-nav-menu" aria-hidden="true"></span> Knowledge Graph
-           </NavLink>
-       </div>
-   - CRITICAL: this project does NOT load the Bootstrap Icons web font. The sidebar
-     glyphs are drawn from inline SVG data-URI background images defined in
-     Components/Layout/NavMenu.razor.css. A <span class="bi bi-xxx-nav-menu"> whose class
-     has no matching rule in that CSS file renders as an EMPTY BOX. Therefore you MUST
-     also add a matching .bi-diagram-3-fill-nav-menu class to NavMenu.razor.css: copy an
-     existing icon rule in that file as a template and replace its SVG markup with the
-     official Bootstrap Icons "diagram-3-fill" SVG, URL-encoded, so the icon is
-     self-contained (no external font or file needed).
-   - Rule of thumb to state in the plan: never emit a <span class="bi bi-..."> without
-     adding its matching data-URI class in NavMenu.razor.css, and never assume a
-     Bootstrap Icons font is loaded.
-
-Diagrams to include:
-- A structure diagram: Graph.razor (Blazor Server) <-> IJSRuntime interop <->
-  graph-renderer.js (Cytoscape.js), with GraphStore as the data source and
-  HelpDeskGraphBuilder as the rebuild source.
-- A sequence/process-flow diagram of a node click: user taps a node, Cytoscape fires
-  the handler, JS calls OnNodeClicked over interop, Blazor reads GraphStore and renders
-  the detail panel.
-- A process-flow diagram of Rebuild: build from database, reload store, re-init diagram.
-
-Acceptance criteria to list:
-- The page renders the current graph on load and shows accurate node and edge counts.
-- Toggling a node type immediately shows or hides those nodes and their edges.
-- Clicking a node shows its properties and its connected nodes; clicking the background
-  clears the selection.
-- Rebuild regenerates the graph from the database and redraws without a page reload.
-- Leaving the page disposes the Cytoscape instance and interop reference cleanly.
-- The Knowledge Graph link appears in the sidebar with a visible graph icon (not an
-  empty box), because a matching .bi-diagram-3-fill-nav-menu rule exists in
-  NavMenu.razor.css.

@@ -95,25 +95,6 @@ What to document and design:
                <span class="bi bi-chat-dots-fill-nav-menu" aria-hidden="true"></span> Graph Assistant
            </NavLink>
        </div>
-   - CRITICAL: this project does NOT load the Bootstrap Icons web font. The sidebar
-     glyphs are drawn from inline SVG data-URI background images defined in
-     Components/Layout/NavMenu.razor.css. A <span class="bi bi-xxx-nav-menu"> whose class
-     has no matching rule in that CSS file renders as an EMPTY BOX. Therefore you MUST
-     also add a matching .bi-chat-dots-fill-nav-menu class to NavMenu.razor.css: copy an
-     existing icon rule in that file as a template and replace its SVG markup with the
-     official Bootstrap Icons "chat-dots-fill" SVG, URL-encoded, so the icon is
-     self-contained (no external font or file needed).
-   - Rule of thumb to state in the plan: never emit a <span class="bi bi-..."> without
-     adding its matching data-URI class in NavMenu.razor.css, and never assume a
-     Bootstrap Icons font is loaded.
-
-Diagrams to include:
-- A structure diagram: GraphChat.razor -> IChatClient (Microsoft.Extensions.AI, with
-  UseFunctionInvocation) -> graph tools -> GraphStore -> graph files.
-- A process-flow diagram of one question: user prompt, model decides to call a tool,
-  tool traverses GraphStore, result returns to the model, model composes a grounded
-  answer, page displays it. Label the tool round trip carefully (avoid starting an edge
-  label with a number and a period).
 
 Acceptance criteria to list:
 - Every factual claim in an answer is backed by a tool call; the assistant never

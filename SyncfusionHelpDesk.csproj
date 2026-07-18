@@ -30,8 +30,4 @@
 		<PackageReference Include="Syncfusion.Blazor.Grid" Version="34.1.31" />
 	</ItemGroup>
 
-	<ItemGroup>
-	  <Folder Include="App_Data\" />
-	</ItemGroup>
-
 </Project>

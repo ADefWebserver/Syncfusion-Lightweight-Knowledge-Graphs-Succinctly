@@ -90,14 +90,3 @@ What to document and design:
    - Configure<GraphOptions>("Graph"), register HelpDeskGraphBuilder (scoped) and
      GraphStore (singleton), ensure the output directory exists at startup, and call
      GraphStore.ReloadAsync() once so any existing snapshot loads into memory.
-
-Diagrams to include:
-- A structure diagram showing Database -> HelpDeskGraphBuilder -> graph files -> GraphStore.
-- A process-flow diagram of a build: read tickets, emit nodes, validate and emit edges,
-  write files atomically, reload the store.
-
-Acceptance criteria to list:
-- Rebuilding the graph produces identical ids for unchanged data.
-- graph.json, manifest.json, and metadata.json are all written on every build.
-- Edges with a missing endpoint are skipped and reflected in the skipped-edge count.
-- Database-derived nodes are treated as read-only.
