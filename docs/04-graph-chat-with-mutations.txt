@@ -16,89 +16,77 @@ Output Format:
 Return only the contents of the .md file, starting with a top‑level # heading.
 Features to document:
 
-Feature: The Graph Chat assistant with mutations (Components/Pages/GraphChat.razor
-extended with a safe write path and human approval).
+Extend the existing Graph Chat assistant with a carefully controlled mutation path.
+At this stage, the application already has a file-based graph under App_Data/graph, a
+GraphStore that keeps it in memory, and a read-only /graphchat page that uses
+Microsoft.Extensions.AI tools for deterministic queries. The assistant may now
+propose changes, but no proposal should be applied until a person has reviewed a
+preview and explicitly approved it. Every applied change must also be auditable.
 
-Context:
-The application already has (a) a file-based knowledge graph under App_Data/graph with
-a GraphStore in memory, and (b) a read-only chat page at /graphchat that answers
-questions by calling deterministic graph tools through Microsoft.Extensions.AI. This
-feature adds the ability to CHANGE the graph, but only through a controlled,
-audited, two-phase path that a human must approve. It also introduces an optional
-"knowledge layer" of graph-native nodes and edges that do not come from the database.
+Keep all facts derived from the database read-only. Ticket, TicketDetail, Requester,
+Status, and Day nodes cannot be created, changed, or deleted through this feature.
+Instead, introduce an optional graph-native knowledge layer with KnowledgeArticle and
+Resolution nodes. This layer may also contain LINKED_TO edges from Ticket to Ticket,
+REFERENCES_ARTICLE edges from Ticket to KnowledgeArticle, and RESOLVED_BY edges from
+Ticket to Resolution. Only graph-native nodes and edges may be managed by mutations.
 
-Goal:
-Let the assistant propose changes to the graph and apply them only after a preview and
-an explicit human approval, so the database-derived facts stay read-only while a
-curated knowledge layer can be edited safely.
+Use the same two-phase contract for every mutation:
+MutationResult Name(args, bool confirmed = false). With confirmed set to false, the
+operation must not write anything. It should return a MutationResult whose Preview
+contains a plain-language summary, the files that would be affected, and any
+validation warnings. With confirmed set to true, the operation applies the change,
+rebuilds the graph indexes, updates the manifest, appends an audit entry, and returns
+the resulting state.
 
-What to document and design:
+Document the supported operations and their validation rules. LinkTickets adds a
+LINKED_TO edge but rejects self-links and duplicates in either direction.
+AddKnowledgeArticle creates a KnowledgeArticle node. ReferenceArticle adds a
+REFERENCES_ARTICLE edge and rejects duplicates. RecordResolution creates a Resolution
+node and its RESOLVED_BY edge. DeleteArticle removes an article and its incoming
+edges, but it must be rejected while REFERENCES_ARTICLE edges still point to the
+article unless cascade is true. Every new edge requires existing endpoints of the
+expected types. Any attempt to modify a database-derived node property must be
+rejected.
 
-1. The extended knowledge domain (graph-native, not from the database):
-   - New node types: KnowledgeArticle and Resolution.
-   - New edge types: LINKED_TO (Ticket -> Ticket), REFERENCES_ARTICLE
-     (Ticket -> KnowledgeArticle), RESOLVED_BY (Ticket -> Resolution).
-   - These are the only things that may be created, edited, or deleted; the
-     database-derived nodes (Ticket, TicketDetail, Requester, Status, Day) remain
-     strictly read-only.
+Put the shared mutation models in Services/Graph/MutationModels.cs. MutationStatus
+should have Rejected, PreviewOnly, and Applied values. MutationPreview should contain
+Summary, AffectedFiles, and Warnings. MutationResult should contain Status, Preview,
+and Errors, with factory helpers named Rejected, PreviewOnly, and Applied.
 
-2. The mutations specification:
-   - Every mutation tool has the signature pattern
-     MutationResult Name(args, bool confirmed = false).
-   - When confirmed == false the tool changes NOTHING and returns a MutationResult
-     whose Preview holds a human-readable summary, the list of files that would change,
-     and any validation warnings. When confirmed == true it applies the change,
-     rebuilds indexes, updates the manifest, appends to the audit log, and returns the
-     post-change state.
-   - Document the tool set and validation rules: LinkTickets (add LINKED_TO; reject a
-     duplicate in either direction and self-links), AddKnowledgeArticle (create a
-     KnowledgeArticle node), ReferenceArticle (add REFERENCES_ARTICLE; reject if it
-     already exists), RecordResolution (create a Resolution node plus a RESOLVED_BY
-     edge), DeleteArticle (remove an article and its incoming edges; reject while a
-     REFERENCES_ARTICLE still points to it unless cascade == true). Both endpoints of
-     any new edge must exist and be of the expected type. Mutations targeting
-     database-derived node properties are rejected.
+Make Services/Graph/GraphMutationService.cs the only component allowed to write graph
+files. Protect the write path with SemaphoreSlim so concurrent mutations cannot
+interleave. Keep a ReadOnlyNodeTypes set containing Ticket, TicketDetail, Requester,
+Status, and Day, and use it to reject forbidden targets consistently.
 
-3. The mutation models (Services/Graph/MutationModels.cs):
-   - MutationStatus enum (Rejected, PreviewOnly, Applied).
-   - MutationPreview (Summary, AffectedFiles, Warnings).
-   - MutationResult (Status, Preview, Errors) with Rejected/PreviewOnly/Applied
-     factory helpers.
+Every public method on GraphMutationService should follow the same preview and confirm
+flow. Once confirmed, work from an in-memory GraphDocument, atomically write graph.json
+and manifest.json through a temporary file and move, reload GraphStore, and append one
+line to audit.log. Include UpdateNodeContent(nodeId, propertyName, value, confirmed),
+which updates one Data property on an existing editable node, or updates its label
+when propertyName is "label". This method must never create or delete a node, alter an
+edge, or modify a read-only node.
 
-4. The single writer (Services/Graph/GraphMutationService.cs):
-   - The ONLY component allowed to write the graph files. Guard writes with a
-     SemaphoreSlim so two mutations cannot interleave.
-   - Keep a ReadOnlyNodeTypes set (Ticket, TicketDetail, Requester, Status, Day) and
-     reject any mutation that targets them.
-   - Each public mutation follows the two-phase pattern above. On confirm it applies
-     the change to an in-memory GraphDocument, writes graph.json and manifest.json
-     atomically (temp file then move), refreshes GraphStore, and appends a line to
-     audit.log.
-   - Include UpdateNodeContent(nodeId, propertyName, value, confirmed): set one Data
-     property of an existing node, or its label when propertyName == "label". It never
-     creates or deletes nodes and never touches edges, and rejects read-only nodes.
+Although the service supports the full mutation domain, expose exactly one write tool
+to the AI model. Define IGraphWriteTools and GraphWriteTools in
+Services/AI/GraphTools, with UpdateNodeContent(nodeId, propertyName, value) as the
+only model-visible write capability. It should delegate to GraphMutationService and
+may pass confirmed = true only after human approval. Its [Description] must explain
+that this is the sole permitted edit, that it cannot create or delete nodes or edges,
+and that database-derived nodes remain read-only.
 
-5. The chat write tool (Services/AI/GraphTools/IGraphWriteTools.cs and
-   GraphWriteTools.cs):
-   - Expose exactly ONE write capability to the model: UpdateNodeContent(nodeId,
-     propertyName, value), delegating to GraphMutationService with confirmed = true
-     only after human approval. The [Description] must make clear this is the only
-     permitted change, that it cannot create or delete nodes or edges, and that
-     database-derived nodes are read-only.
-   - Extend GraphToolRegistration with an overload CreateTools(read, write) that adds
-     the write tool alongside the read-only traversal tools.
-   - Update GraphSystemPrompt to describe the optional knowledge layer and the single
-     write tool, instructing the model to change a node's contents only when the user
-     clearly asks and to report exactly what the tool returns.
+Add a GraphToolRegistration.CreateTools(read, write) overload that combines this one
+write tool with the existing read-only traversal tools. Update GraphSystemPrompt to
+describe the optional knowledge layer and UpdateNodeContent. Instruct the model to
+use it only when the user has clearly requested a content change and to report the
+tool result exactly.
 
-6. The approval UI (Components/Shared/MutationApproval.razor):
-   - A Syncfusion SfDialog (modal) that shows the MutationPreview (the summary, the
-     list of affected files, and any warnings) with Approve and Reject buttons and
-     Visible / VisibleChanged, Preview, OnApprove, and OnReject parameters.
-   - Wire GraphChat.razor so a proposed change first produces a preview
-     (confirmed = false), displays the approval dialog, and only calls the mutation
-     with confirmed = true when the user approves; on reject, nothing is written.
+Create Components/Shared/MutationApproval.razor as a modal Syncfusion SfDialog. It
+should display the MutationPreview summary, affected files, and warnings, and offer
+Approve and Reject buttons. Give it Visible, VisibleChanged, Preview, OnApprove, and
+OnReject parameters. In GraphChat.razor, always request a preview with confirmed =
+false before showing this dialog. Call the confirmed mutation only from the approval
+callback. Rejecting or closing the proposal must leave every file unchanged.
 
-7. Dependency injection (Program.cs):
-   - Register GraphMutationService (scoped) and IGraphWriteTools -> GraphWriteTools,
-     and pass both the read and write tools into the chat's tool list.
+Finally, register GraphMutationService as scoped and map IGraphWriteTools to
+GraphWriteTools in Program.cs. Build the chat tool list with both the read and write
+tool sets while preserving the approval boundary described above.

@@ -16,65 +16,59 @@ Output Format:
 Return only the contents of the .md file, starting with a top‑level # heading.
 Features to document:
 
-Feature: The Knowledge Graph Visualization page (Components/Pages/Graph.razor).
+The next feature is an interactive knowledge graph explorer implemented in
+Components/Pages/Graph.razor. By this point, the file-based graph is already loaded
+into a singleton GraphStore, and HelpDeskGraphBuilder and GraphStore are registered in
+dependency injection. The graph contains Ticket, TicketDetail, Requester, Status, and
+Day nodes connected by REQUESTED_BY, HAS_DETAIL, HAS_STATUS, and OCCURRED_ON edges.
 
-Context:
-The application already has a file-based knowledge graph loaded into a singleton
-GraphStore (nodes and edges with types Ticket, TicketDetail, Requester, Status, Day,
-and edges REQUESTED_BY, HAS_DETAIL, HAS_STATUS, OCCURRED_ON). This feature adds an
-interactive Blazor Server page that renders that graph visually in the browser using
-Cytoscape.js through JavaScript interop. Assume GraphStore and HelpDeskGraphBuilder
-already exist and are registered in DI.
+Design a Blazor Server page at /graph that renders this graph in the browser with
+Cytoscape.js through JavaScript interop. A user should be able to filter node types,
+select a node to inspect its properties and neighbors, toggle full-screen mode, and
+rebuild the graph from the current database without reloading the page.
 
-Goal:
-Build an interactive graph explorer at route /graph that draws the knowledge graph,
-lets the user filter by node type, click a node to inspect its properties and
-neighbors, and rebuild the graph from the current database, all without a page
-reload.
+Put the browser-side integration in wwwroot/js/graph-renderer.js. Cytoscape.js should
+be available as wwwroot/js/cytoscape.min.js and referenced by the application host.
+Give each node type a recognizable style: Ticket is a blue round-rectangle,
+TicketDetail a green ellipse, Requester a red ellipse, Status an orange diamond, and
+Day a teal rectangle. Edges need visible labels, arrowheads, and bezier curves, and
+selected elements need a distinct :selected style. Use Cytoscape's animated "cose"
+force-directed layout.
 
-What to document and design:
+The renderer should export four functions for Blazor to call:
+initCytoscape(containerId, graphData, dotNetRef), updateGraph(containerId, graphData),
+destroyCytoscape(containerId), and toggleFullScreen(containerId). During
+initialization, register a node tap handler that invokes OnNodeClicked on the .NET
+reference. Tapping the background should clear the current selection.
 
-1. The JavaScript renderer (wwwroot/js/graph-renderer.js):
-   - Load Cytoscape.js (wwwroot/js/cytoscape.min.js) and reference it from the app host.
-   - A node-type style map giving each type a distinct color and shape
-     (Ticket = blue round-rectangle, TicketDetail = green ellipse, Requester = red
-     ellipse, Status = orange diamond, Day = teal rectangle).
-   - Edge styling with a label, arrowhead, and bezier curve style; a :selected style.
-   - A "cose" force-directed layout with animation.
-   - Exported functions callable from Blazor: initCytoscape(containerId, graphData,
-     dotNetRef), updateGraph(containerId, graphData), destroyCytoscape(containerId),
-     and toggleFullScreen(containerId). initCytoscape wires a node tap handler that
-     calls back into .NET (OnNodeClicked) and a background tap that clears selection.
+Components/Pages/Graph.razor should use @page "/graph", @rendermode
+InteractiveServer, and @implements IAsyncDisposable, and inject IJSRuntime,
+GraphStore, and HelpDeskGraphBuilder. Its toolbar should include a Rebuild Graph
+button that is disabled while work is in progress, badges for node and edge counts,
+the graph's generated timestamp, and a Full Screen toggle.
 
-2. The Blazor page (Components/Pages/Graph.razor):
-   - @page "/graph", @rendermode InteractiveServer, @implements IAsyncDisposable.
-   - Inject IJSRuntime, GraphStore, and HelpDeskGraphBuilder.
-   - Toolbar: a Rebuild Graph button (disabled while busy), badges showing node and
-     edge counts, the generated timestamp, and a Full Screen toggle.
-   - Entity-type checkboxes built from GraphStore.NodeTypes. Default the
-     visible set to the connected core (Ticket + Requester + Status) and let the user
-     toggle the busier types (TicketDetail, Day) on; fall back to showing all types if
-     none of the defaults are present.
-   - A #cy container div sized to the viewport, plus a detail panel that appears when a
-     node is selected showing its label, type, all Data properties, and a list of
-     connected nodes with the relationship label.
+Build the entity-type checkboxes from GraphStore.NodeTypes. Initially show the
+connected core of Ticket, Requester, and Status, while allowing TicketDetail and Day
+to be enabled when needed. If none of those default core types exist, show every
+available type instead. The graph itself belongs in a viewport-sized div with the ID
+cy. When a node is selected, show a detail panel containing its label, type, every
+Data property, and its connected nodes along with each relationship label.
 
-3. The interop and data shaping:
-   - BuildGraphData(): project only nodes whose type is visible, and only edges whose
-     both endpoints are visible, into a shape of { nodes:[{id,label,type}],
-     edges:[{id,source,target,label}] } that the renderer expects.
-   - OnAfterRenderAsync(firstRender): on first render, create a DotNetObjectReference
-     and call initCytoscape.
-   - [JSInvokable] OnNodeClicked(nodeId): look the node up in GraphStore, populate the
-     detail panel metadata, and gather neighbors from OutEdges and InEdges.
-   - ToggleType: update the visible set, dismiss the panel, and call updateGraph
-     (re-render without re-initializing).
-   - RebuildAsync: call HelpDeskGraphBuilder.BuildAsync(), GraphStore.ReloadAsync(),
-     refresh the type list, and re-initialize the diagram.
-   - DisposeAsync: call destroyCytoscape and dispose the DotNetObjectReference; swallow
-     JSDisconnectedException when the circuit is already gone.
+Document the page's data shaping and interop lifecycle in enough detail to implement
+it. BuildGraphData should include only visible node types and should include an edge
+only when both of its endpoints are visible. Return the shape expected by the
+renderer: { nodes:[{id,label,type}], edges:[{id,source,target,label}] }.
 
-4. Configuration note:
-   - Large graphs can produce big interop payloads, so raise the SignalR hub message
-     size limit in Program.cs (AddInteractiveServerComponents / HubOptions
-     MaximumReceiveMessageSize) so a big graph does not drop the circuit.
+On the first OnAfterRenderAsync call, create a DotNetObjectReference and pass it to
+initCytoscape. Mark OnNodeClicked(nodeId) as JSInvokable; it should retrieve the node
+from GraphStore, populate the detail panel, and collect neighbors from both OutEdges
+and InEdges. ToggleType should update the visible set, close the detail panel, and
+call updateGraph rather than initializing Cytoscape again. RebuildAsync should call
+HelpDeskGraphBuilder.BuildAsync, then GraphStore.ReloadAsync, refresh the available
+types, and reinitialize the diagram. DisposeAsync should destroy the Cytoscape
+instance and dispose the DotNetObjectReference, ignoring JSDisconnectedException if
+the Blazor circuit has already ended.
+
+Finally, include the required Program.cs configuration. Large graphs can create
+large interop messages, so raise HubOptions.MaximumReceiveMessageSize through
+AddInteractiveServerComponents to prevent SignalR from dropping the circuit.
