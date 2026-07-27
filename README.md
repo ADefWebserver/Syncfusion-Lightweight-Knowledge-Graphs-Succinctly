@@ -23,11 +23,12 @@
 - For **SENDGRID_APIKEY** enter your SendGrid API key 
 - For **SenderEmail** enter your Email address 
 
-### To Enable OpenAI or Azure Open AI
+### To Enable OpenAI
 
 1) Open **appsettings.json**: 
 - For **OpenAI/apiKey** enter your *Open AI* API key
-- If using *Azure Open AI* also enter **OpenAI/deploymentName** and **OpenAI/endpoint**
+- Optionally set **OpenAI/model** to the OpenAI model used by Smart Paste
+  (default `gpt-4o-mini`)
 
 > Note: the **OpenAI** section drives the Syncfusion Smart Components. The knowledge-graph
 > assistant (below) uses a separate **AI** section. The two are independent.
@@ -59,9 +60,10 @@ for the full design.
 
 1) Open **appsettings.json** and set the **AI** section (store real keys in user secrets,
    not in source control):
-- **AI/Provider** selects the provider: `OpenAI`, `AzureOpenAI`, `Anthropic`, or `Gemini`.
-- Fill in the matching sub-section (for example **AI/OpenAI/ApiKey** and
-  **AI/OpenAI/Model**). Switching providers is a one-line config change.
+- Set **AI/ApiKey** to your OpenAI API key.
+- Optionally set **AI/Model** to the OpenAI model to use (default `gpt-4o-mini`).
+
+OpenAI is the only supported AI provider.
 
 2) **Graph/OutputPath** sets where the graph files are written (default `App_Data/graph`);
    the folder is created at startup.

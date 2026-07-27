@@ -29,10 +29,11 @@ addresses, counts, statuses, or dates. Use Microsoft.Extensions.AI, including
 IChatClient and automatic function invocation, and use Syncfusion's Blazor
 SfAIAssistView for the interface.
 
-Create Services/AI/ChatClientFactory.cs to keep the AI provider behind IChatClient.
-Its static Create(IConfiguration aiSection) method should read Provider, defaulting to
-OpenAI, and construct the matching client. Initially support OpenAIClient using ApiKey
-and Model from the "AI" section, with a sensible default model when Model is absent.
+Create Services/AI/ChatClientFactory.cs to keep OpenAI client construction behind
+IChatClient. Its static Create(IConfiguration aiSection) method should construct an
+OpenAIClient using ApiKey and Model from the "AI" section, with a sensible default
+model when Model is absent. OpenAI is the only supported AI provider; do not add a
+provider selector.
 Finish the pipeline with .AsBuilder().UseFunctionInvocation().Build() so tool calls
 are handled automatically during a chat request.
 
@@ -73,7 +74,7 @@ GraphSystemPrompt.Text. For each submitted prompt, append the user message, call
 ChatClient.GetResponseAsync with the history and new ChatOptions whose Tools come from
 GraphToolRegistration.CreateTools(GraphTools), append the assistant response to the
 history, and return response.Text. Supply a friendly fallback if the response text is
-empty. Catch request failures and tell the user to verify the provider key in the
+empty. Catch request failures and tell the user to verify the OpenAI API key in the
 "AI" configuration section.
 
 In Program.cs, register IChatClient through

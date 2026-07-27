@@ -30,28 +30,28 @@ flowchart LR
     Client[IChatClient]
     Tools[GraphChatTools]
     Store[GraphStore singleton]
-    Provider[AI provider]
+    OpenAI[OpenAI API]
 
     User --> Assist
     Assist --> Page
     Page --> Client
     Client -->|automatic function invocation| Tools
     Tools --> Store
-    Client --> Provider
-    Provider --> Client
+    Client --> OpenAI
+    OpenAI --> Client
     Client --> Page
     Page --> Assist
 ```
 
 ## 3. ChatClientFactory
 
-Create `Services/AI/ChatClientFactory.cs` to keep the AI provider behind
-`IChatClient`.
+Create `Services/AI/ChatClientFactory.cs` to keep OpenAI client construction
+behind `IChatClient`.
 
 - Static `IChatClient Create(IConfiguration aiSection)`.
-- Reads `Provider`, defaulting to `OpenAI`, and constructs the matching client.
-- Initially supports `OpenAIClient` using `ApiKey` and `Model` from the `"AI"`
+- Constructs `OpenAIClient` using `ApiKey` and `Model` from the `"AI"`
   section, with a sensible default model when `Model` is absent.
+- OpenAI is the only supported AI provider; there is no provider selector.
 - Finishes the pipeline with
   `.AsBuilder().UseFunctionInvocation().Build()` so tool calls are handled
   automatically during a chat request.
@@ -66,8 +66,7 @@ Configuration notes:
 
 ```mermaid
 flowchart TD
-    Read[Read AI section] --> Prov{Provider value}
-    Prov -->|OpenAI or default| OpenAI[Construct OpenAIClient with ApiKey and Model]
+    Read[Read AI section] --> OpenAI[Construct OpenAIClient with ApiKey and Model]
     OpenAI --> Builder[AsBuilder UseFunctionInvocation Build]
     Builder --> Client[Return IChatClient]
 ```
@@ -131,7 +130,7 @@ Per submitted prompt:
 2. Call `ChatClient.GetResponseAsync(history, new ChatOptions { Tools = GraphToolRegistration.CreateTools(GraphTools) })`.
 3. Append the assistant response to history.
 4. Return `response.Text` (supply a friendly fallback if the text is empty).
-5. Catch request failures and tell the user to verify the provider key in the
+5. Catch request failures and tell the user to verify the OpenAI API key in the
    `"AI"` configuration section.
 
 ```mermaid
