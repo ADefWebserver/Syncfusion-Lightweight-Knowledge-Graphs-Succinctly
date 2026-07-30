@@ -48,10 +48,10 @@ namespace SyncfusionHelpDesk
             // Syncfusion Support
             builder.Services.AddSyncfusionBlazor();
 
-            var openAIApiKey = builder.Configuration["OpenAI:apiKey"];
+            var openAIApiKey = builder.Configuration["AI:ApiKey"];
             if (!string.IsNullOrWhiteSpace(openAIApiKey))
             {
-                var openAIModel = builder.Configuration["OpenAI:model"] ?? "gpt-4o-mini";
+                var openAIModel = builder.Configuration["AI:Model"] ?? "gpt-4o-mini";
                 IChatClient openAIChatClient = new OpenAI.Chat.ChatClient(openAIModel, openAIApiKey)
                     .AsIChatClient();
 
