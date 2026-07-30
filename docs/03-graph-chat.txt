@@ -1,0 +1,125 @@
+Task:
+Create a Markdown file and save it in the docs/ directory. Actually create the file
+The file should contain a detailed, structured plan for implementing the following features
+(I will list them after this instruction).
+Requirements:
+Use clear section headings.
+Include Mermaid diagrams to illustrate both system structure and process flows.
+Do not put \n inside Mermaid node labels because VS Code's Mermaid renderer doesn't support that.
+Avoid edge labels like "1. User clicks AI"
+because Mermaid's renderer interprets 1. as a markdown numbered list inside the label.
+Provide enough detail that a developer could begin implementing the features
+based on this document alone.
+Use Markdown formatting throughout.
+Do not include any file-system commands; simply output the Markdown content.
+Output Format:
+Return only the contents of the .md file, starting with a top-level # heading.
+Features to document:
+
+Add a read-only Graph Chat assistant in Components/Pages/GraphChat.razor. The
+application already has a singleton GraphStore containing Ticket, TicketDetail,
+Requester, Status, and Day nodes and REQUESTED_BY, HAS_DETAIL, HAS_STATUS, and
+OCCURRED_ON edges. The new page should answer relationship questions about this graph
+at /graphchat. Typical questions include "How many tickets has this email opened?",
+"List the open tickets," and "Show graph statistics."
+
+The assistant must remain strictly read-only and ground every answer in deterministic
+GraphStore traversals exposed as tools. It must never invent ticket IDs, email
+addresses, counts, statuses, or dates. Use Microsoft.Extensions.AI, including
+IChatClient and automatic function invocation, and use Syncfusion's Blazor
+SfAIAssistView for the interface.
+
+Create Services/AI/ChatClientFactory.cs to keep OpenAI client construction behind
+IChatClient. Its static Create(IConfiguration aiSection) method should read ApiKey and
+Model from the "AI" section and fall back to a DefaultModel constant when Model is
+absent. OpenAI is the only supported AI provider; do not add a provider selector.
+
+Build the client against the OpenAI Responses API rather than Chat Completions:
+new OpenAIClient(apiKey).GetResponsesClient().AsIChatClient(model). This matters,
+because reasoning models such as the gpt-5 family reject function tools on
+/v1/chat/completions but accept them on /v1/responses. The Responses client is still
+marked experimental in the OpenAI SDK, so the call site needs a
+#pragma warning disable OPENAI001 and restore pair with a comment explaining why.
+Finish the pipeline with .AsBuilder().UseFunctionInvocation().Build() so tool calls
+are handled automatically during a chat request.
+
+Do not make a configured API key a startup requirement. The application and chat page
+must still load when the key is empty; substitute a placeholder key so construction
+does not throw, and let an attempted request fail with a clear authentication message
+surfaced by the page.
+
+The "AI" section is the single AI configuration for the whole application. It holds
+ApiKey and Model and nothing else. There is no separate "OpenAI" configuration
+section: Program.cs reads AI:ApiKey and AI:Model directly to register the Syncfusion
+Smart Components inference service, and only when the key is non-empty. Document that
+one section feeding two consumers, so nobody reintroduces a second key.
+
+Define the read-only tool contract in Services/AI/GraphTools/IGraphChatTools.cs and
+implement it in GraphChatTools.cs. Every method should perform a deterministic
+GraphStore traversal and have a [Description] attribute so its method signature can
+become the tool schema. Put the [Description] attributes on the interface rather than
+the implementation, so the text the model reads and the contract the code compiles
+against cannot drift apart. Any method that returns a list must accept a max argument
+to keep results from flooding the model's context window.
+
+Provide these tools: FindRequesterByEmail(query, max),
+CountTicketsForRequester(email), ListTicketsForRequester(email, status, max),
+ListDetailsForTicket(ticketId, max), SearchNodes(query, type, max), GetNode(id),
+GetNeighbors(id, edgeType, max), and Stats(). They are all read-only. Return focused
+DTOs, declared in Services/AI/GraphTools/GraphChatDtos.cs, such as NodeSummary,
+NodeDetail, Neighbor, TicketSummary, CommentSummary, RequesterSummary, and GraphStats,
+rather than raw graph nodes or database rows.
+
+In Services/AI/GraphTools/GraphToolRegistration.cs, add a static
+CreateTools(IGraphChatTools) method. It should wrap every method with
+AIFunctionFactory.Create and return IList<AITool>.
+
+Services/AI/GraphTools/GraphSystemPrompt.cs should expose a constant prompt that
+explains the graph's node and edge types, its ID conventions, and the tools available.
+Tell the model to derive every number from tool results, resolve people with
+FindRequesterByEmail before looking up tickets, prefer purpose-built tools over the
+generic search tools, explicitly say when a tool returns no result, and keep answers
+concise while naming the tickets or requesters it found.
+
+The /graphchat page should inject IChatClient and IGraphChatTools and host an
+SfAIAssistView with several PromptSuggestions and a PromptRequested handler. Wrap the
+whole page in an AuthorizeView so an anonymous visitor sees a sign-in message instead
+of the assistant. Maintain a ChatMessage history initialized with a System message
+containing GraphSystemPrompt.Text. Because Syncfusion's InteractiveChat namespace also
+defines a ChatMessage type, add a using alias so ChatMessage resolves to
+Microsoft.Extensions.AI.ChatMessage. For each submitted prompt, append the user
+message, call ChatClient.GetResponseAsync with the history and new ChatOptions whose
+Tools come from GraphToolRegistration.CreateTools(GraphTools), append
+response.Messages to the history, and return response.Text. Supply a friendly fallback
+if the response text is empty. Catch request failures and tell the user to verify the
+OpenAI API key in the "AI" configuration section.
+
+SfAIAssistView renders its response as HTML, but the model replies in Markdown, so a
+raw assignment shows literal asterisks and pipe characters instead of lists and
+tables. Add a Markdig package reference and convert the response before assigning it:
+build a static MarkdownPipeline once with new MarkdownPipelineBuilder()
+.UseAdvancedExtensions().Build(), then assign Markdown.ToHtml(responseText, pipeline)
+to args.Response. Keep the conversion at the very edge of the component, so the chat
+history stores the model's original Markdown and only the displayed string is HTML.
+
+In Program.cs, register IChatClient through
+ChatClientFactory.Create(config.GetSection("AI")) and map IGraphChatTools to
+GraphChatTools. Register IChatClient as a singleton rather than scoped: Syncfusion's
+SyncfusionAIService is itself registered as a singleton and cannot consume a scoped
+IChatClient, and the client the factory returns is stateless and thread-safe.
+
+Add a Graph Assistant link to the left sidebar inside the <Authorized> block in
+Components/Layout/NavMenu.razor. Use a NavLink to graphchat and include a span with
+the bi bi-chat-dots-fill-nav-menu classes. Add a matching
+.bi-chat-dots-fill-nav-menu rule to NavMenu.razor.css so the icon is visibly rendered
+rather than appearing as an empty box.
+
+List acceptance criteria that verify the grounding behavior as well as the UI. Every
+factual statement must be backed by a tool result, with no fabricated IDs, counts, or
+dates. Questions about a person must resolve the email first and then report tickets.
+"Show graph statistics" must return node and edge counts from Stats(). A reply
+containing a Markdown list or table must render as a real list or table rather than as
+raw Markdown punctuation. With no API key, the page must still render and must show a
+clear error after a prompt is submitted. The application must start without a
+dependency-injection lifetime exception. The sidebar must show the Graph Assistant
+link with its chat icon.

@@ -1,0 +1,92 @@
+Task:
+Create a Markdown file and save it in the docs/ directory. Actually create the file
+The file should contain a detailed, structured plan for implementing the following features
+(I will list them after this instruction).
+Requirements:
+Use clear section headings.
+Include Mermaid diagrams to illustrate both system structure and process flows.
+Do not put \n inside Mermaid node labels because VS Code's Mermaid renderer doesn't support that.
+Avoid edge labels like "1. User clicks AI"
+because Mermaid's renderer interprets 1. as a markdown numbered list inside the label.
+Provide enough detail that a developer could begin implementing the features
+based on this document alone.
+Use Markdown formatting throughout.
+Do not include any file‑system commands; simply output the Markdown content.
+Output Format:
+Return only the contents of the .md file, starting with a top‑level # heading.
+Features to document:
+
+The first feature is the file-based storage layer for the knowledge graph. This is an
+existing ASP.NET Core Blazor Server help-desk application called SyncfusionHelpDesk.
+Tickets are stored in SQL Server through Entity Framework Core, using
+SyncfusionHelpDeskContext. The relevant models are HelpDeskTicket, with Id,
+TicketDescription, TicketStatus, TicketDate, TicketRequesterEmail, and TicketGuid,
+and HelpDeskTicketDetail, with Id, TicketDescription, and TicketDetailDate.
+
+There is no graph engine or graph database, and one should not be introduced. Instead,
+design a small, deterministic builder that derives a graph from the live help-desk
+database and saves it as readable JSON under App_Data/graph. On start-up, 
+create the file if it does not already exist.This storage layer needs to come first 
+because the later Cytoscape visualization and AI chat features will both
+read from these files. The graph format itself should require only three small C#
+classes and no third-party graph library.
+
+Begin by documenting the graph schema in the plan itself. Describe each node type,
+its database source, important properties, and ID rule, and each edge type, its
+direction, meaning, and validation rules. IDs must be lowercase, stable across
+rebuilds, and follow <type>:<key>:
+
+- Ticket uses ticket:<n>. Its data contains status, ticketDate, requesterEmail, and
+   ticketGuid, and its label is the first 60 characters of the description.
+- TicketDetail uses detail:<n>. Its data contains ticketDetailDate and a snippet made
+   from the first 200 characters of the description.
+- Requester uses requester:<email>, with one node for each distinct email address using
+   case-insensitive comparison.
+- Status uses status:<status>, with one node for each distinct status using
+   case-insensitive comparison.
+- Day uses day:<yyyy-MM-dd>, with one node for every distinct calendar day found on a
+   ticket or ticket detail.
+
+Node type names use PascalCase, while edge type names use UPPER_SNAKE_CASE. Define
+REQUESTED_BY from Ticket to Requester, HAS_DETAIL from Ticket to TicketDetail with
+detailDate in the edge data, HAS_STATUS from Ticket to Status, and OCCURRED_ON from
+either Ticket or TicketDetail to Day with the relevant date in the edge data. Make it
+explicit that database-derived nodes are read-only. An edge may only be emitted when
+both endpoints exist; otherwise, skip it and include it in the build report's count.
+
+Use the following three-class data model, without adding a graph engine:
+
+- GraphDocument contains Version, GeneratedUtc, List<GraphNode> Nodes, and
+   List<GraphEdge> Edges.
+- GraphNode contains Id, Type, Label, and Dictionary<string, object?> Data.
+- GraphEdge contains From, To, Type, and Dictionary<string, object?> Data.
+
+Describe the four files kept under App_Data/graph. graph.json is the serialized
+GraphDocument. manifest.json contains lightweight node and edge counts grouped by
+type, plus LastBuildUtc and LastMutationUtc. metadata.json contains a description of
+the domain and glossaries for node and edge labels. audit.log is append-only and will
+be used by a later mutation feature. JSON should be indented and use camelCase names.
+
+The implementation plan should cover HelpDeskGraphBuilder, GraphFile, and GraphOptions.
+HelpDeskGraphBuilder should use IDbContextFactory<SyncfusionHelpDeskContext> to query
+with AsNoTracking and include ticket details. It must emit every node before emitting
+any edge, deduplicate node IDs with a HashSet, validate edge endpoints against that
+set, expose LastSkippedEdges as its build report, and then write graph.json,
+manifest.json, and metadata.json.
+
+GraphFile should provide static helpers for path resolution, loading, and atomic
+writes. Each write goes to a .tmp file first and is completed with File.Move using
+overwrite, so an interrupted write cannot corrupt graph.json. Include dedicated
+WriteManifestAsync and WriteMetadataAsync helpers. GraphOptions should bind to the
+"Graph" configuration section and default OutputPath to App_Data/graph.
+
+Also design GraphStore as a singleton in-memory view of graph.json. When loaded, it
+should build indexes by node ID, node type, edge From value, and edge To value. This
+makes traversal an O(1) lookup followed by a short walk. Its public API should expose
+GetNode, NodesOfType, OutEdges, InEdges, NodeTypes, and ReloadAsync, with ReloadAsync
+reading the latest file and rebuilding all indexes.
+
+Finally, explain the Program.cs setup: bind GraphOptions from the "Graph" section,
+register HelpDeskGraphBuilder as scoped and GraphStore as a singleton, create the
+configured output directory during startup, and call GraphStore.ReloadAsync once so
+an existing snapshot is available immediately.
