@@ -54,6 +54,23 @@ flowchart LR
     Store --> Consumers
 ```
 
+### File Layout
+
+Every class in this feature lives in a `Graph/` folder at the project root, in the
+`SyncfusionHelpDesk.Graph` namespace.
+
+| File | Contents |
+| --- | --- |
+| `Graph/GraphModel.cs` | `GraphDocument`, `GraphNode`, `GraphEdge` |
+| `Graph/GraphOptions.cs` | `GraphOptions`, bound to the `"Graph"` configuration section |
+| `Graph/GraphFile.cs` | Path resolution, loading, atomic writes, file-name constants, shared `JsonSerializerOptions` |
+| `Graph/HelpDeskGraphBuilder.cs` | `HelpDeskGraphBuilder` |
+| `Graph/GraphStore.cs` | `GraphStore`, the singleton in-memory view |
+
+Note that this is distinct from `Services/Graph/`, which a later mutation feature
+uses for `GraphMutationService` in the `SyncfusionHelpDesk.Services.Graph`
+namespace. The storage layer is not a service; it is the model plus its file I/O.
+
 ## 3. Graph Schema
 
 ### 3.1 ID Rules

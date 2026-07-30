@@ -11,9 +11,9 @@ because Mermaid's renderer interprets 1. as a markdown numbered list inside the 
 Provide enough detail that a developer could begin implementing the features
 based on this document alone.
 Use Markdown formatting throughout.
-Do not include any file‑system commands; simply output the Markdown content.
+Do not include any file-system commands; simply output the Markdown content.
 Output Format:
-Return only the contents of the .md file, starting with a top‑level # heading.
+Return only the contents of the .md file, starting with a top-level # heading.
 Features to document:
 
 The first feature is the file-based storage layer for the knowledge graph. This is an
@@ -54,7 +54,10 @@ either Ticket or TicketDetail to Day with the relevant date in the edge data. Ma
 explicit that database-derived nodes are read-only. An edge may only be emitted when
 both endpoints exist; otherwise, skip it and include it in the build report's count.
 
-Use the following three-class data model, without adding a graph engine:
+Put every class in this feature in a Graph/ folder at the project root, in the
+SyncfusionHelpDesk.Graph namespace, one file per concern. Use the following
+three-class data model, without adding a graph engine, all three together in
+Graph/GraphModel.cs:
 
 - GraphDocument contains Version, GeneratedUtc, List<GraphNode> Nodes, and
    List<GraphEdge> Edges.
@@ -67,7 +70,8 @@ type, plus LastBuildUtc and LastMutationUtc. metadata.json contains a descriptio
 the domain and glossaries for node and edge labels. audit.log is append-only and will
 be used by a later mutation feature. JSON should be indented and use camelCase names.
 
-The implementation plan should cover HelpDeskGraphBuilder, GraphFile, and GraphOptions.
+The implementation plan should cover Graph/HelpDeskGraphBuilder.cs,
+Graph/GraphFile.cs, and Graph/GraphOptions.cs.
 HelpDeskGraphBuilder should use IDbContextFactory<SyncfusionHelpDeskContext> to query
 with AsNoTracking and include ticket details. It must emit every node before emitting
 any edge, deduplicate node IDs with a HashSet, validate edge endpoints against that
@@ -80,7 +84,7 @@ overwrite, so an interrupted write cannot corrupt graph.json. Include dedicated
 WriteManifestAsync and WriteMetadataAsync helpers. GraphOptions should bind to the
 "Graph" configuration section and default OutputPath to App_Data/graph.
 
-Also design GraphStore as a singleton in-memory view of graph.json. When loaded, it
+Also design Graph/GraphStore.cs as a singleton in-memory view of graph.json. When loaded, it
 should build indexes by node ID, node type, edge From value, and edge To value. This
 makes traversal an O(1) lookup followed by a short walk. Its public API should expose
 GetNode, NodesOfType, OutEdges, InEdges, NodeTypes, and ReloadAsync, with ReloadAsync
