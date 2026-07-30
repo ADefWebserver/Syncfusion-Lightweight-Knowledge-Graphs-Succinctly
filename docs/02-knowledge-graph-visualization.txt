@@ -11,9 +11,9 @@ because Mermaid's renderer interprets 1. as a markdown numbered list inside the 
 Provide enough detail that a developer could begin implementing the features
 based on this document alone.
 Use Markdown formatting throughout.
-Do not include any file‑system commands; simply output the Markdown content.
+Do not include any file-system commands; simply output the Markdown content.
 Output Format:
-Return only the contents of the .md file, starting with a top‑level # heading.
+Return only the contents of the .md file, starting with a top-level # heading.
 Features to document:
 
 The next feature is an interactive knowledge graph explorer implemented in
