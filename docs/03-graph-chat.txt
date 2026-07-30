@@ -104,9 +104,28 @@ history stores the model's original Markdown and only the displayed string is HT
 
 In Program.cs, register IChatClient through
 ChatClientFactory.Create(config.GetSection("AI")) and map IGraphChatTools to
-GraphChatTools. Register IChatClient as a singleton rather than scoped: Syncfusion's
-SyncfusionAIService is itself registered as a singleton and cannot consume a scoped
-IChatClient, and the client the factory returns is stateless and thread-safe.
+GraphChatTools.
+
+CRITICAL - IChatClient MUST be registered with AddSingleton, never AddScoped.
+Syncfusion's SyncfusionAIService is itself registered as a singleton, and in ASP.NET
+Core a singleton cannot consume a scoped service. Registering IChatClient as scoped
+makes the application throw at start-up, before it serves a single page, with an
+AggregateException reading:
+
+  Cannot consume scoped service 'Microsoft.Extensions.AI.IChatClient' from singleton
+  'Syncfusion.Blazor.SmartComponents.SyncfusionAIService'.
+
+The singleton lifetime is safe here because the client ChatClientFactory.Create
+returns holds no per-request state and is thread-safe. Write the registration exactly
+as:
+
+  builder.Services.AddSingleton<IChatClient>(sp =>
+      ChatClientFactory.Create(builder.Configuration.GetSection("AI")));
+
+State this lifetime requirement, and the reason for it, in the plan's dependency
+injection section, so it cannot be lost in a later regeneration. Apply the same rule
+to anything else the Syncfusion AI services consume: a singleton consumer forces every
+dependency it touches to be a singleton or a transient, never a scoped service.
 
 Add a Graph Assistant link to the left sidebar inside the <Authorized> block in
 Components/Layout/NavMenu.razor. Use a NavLink to graphchat and include a span with
@@ -120,6 +139,7 @@ dates. Questions about a person must resolve the email first and then report tic
 "Show graph statistics" must return node and edge counts from Stats(). A reply
 containing a Markdown list or table must render as a real list or table rather than as
 raw Markdown punctuation. With no API key, the page must still render and must show a
-clear error after a prompt is submitted. The application must start without a
-dependency-injection lifetime exception. The sidebar must show the Graph Assistant
-link with its chat icon.
+clear error after a prompt is submitted. The application must start and serve its
+first page without throwing a dependency-injection lifetime exception; specifically,
+IChatClient must be resolvable by the singleton SyncfusionAIService. The sidebar must
+show the Graph Assistant link with its chat icon.

@@ -257,11 +257,31 @@ builder.Services.AddSingleton<IChatClient>(sp =>
 builder.Services.AddScoped<IGraphChatTools, GraphChatTools>();
 ```
 
-The singleton lifetime is required, not preferred. Syncfusion's
-`SyncfusionAIService` is registered as a singleton, and a singleton cannot
-consume a scoped service; registering `IChatClient` as scoped makes the
-application throw an `AggregateException` at startup. The client the factory
-returns is stateless and thread-safe, so sharing it is safe.
+> **Do not use `AddScoped` here.** The singleton lifetime is required, not
+> preferred.
+
+Syncfusion's `SyncfusionAIService` is registered as a singleton, and in ASP.NET
+Core a singleton cannot consume a scoped service. Registering `IChatClient` as
+scoped makes the application throw at start-up, before it serves a single page:
+
+```text
+Cannot consume scoped service 'Microsoft.Extensions.AI.IChatClient' from singleton
+'Syncfusion.Blazor.SmartComponents.SyncfusionAIService'.
+```
+
+The singleton lifetime is safe because the client `ChatClientFactory.Create`
+returns holds no per-request state and is thread-safe.
+
+The general rule, which applies to anything else these AI services consume: a
+singleton consumer forces every dependency it touches to be a singleton or a
+transient, never a scoped service.
+
+| Service | Lifetime | Why |
+| --- | --- | --- |
+| `IChatClient` | **Singleton** | Consumed by the singleton `SyncfusionAIService`; stateless and thread-safe |
+| `IGraphChatTools` | Scoped | Consumed per request by the chat page only |
+| `GraphStore` | Singleton | Holds the loaded graph for the process |
+| `HelpDeskGraphBuilder` | Scoped | Consumes a database context |
 
 Smart Components are wired from the same `"AI"` section, and only when a key is
 present:
@@ -289,7 +309,9 @@ if (!string.IsNullOrWhiteSpace(openAIApiKey))
 - "Show graph statistics" returns node and edge counts from `Stats()`.
 - A reply containing a Markdown list or table renders as a real list or table,
   not as raw Markdown punctuation.
-- The application starts without a dependency-injection lifetime exception.
+- The application starts and serves its first page without throwing a
+  dependency-injection lifetime exception; `IChatClient` is resolvable by the
+  singleton `SyncfusionAIService`.
 - With no API key configured, the page still renders and shows a clear error
   after a prompt is submitted.
 - The sidebar shows the Graph Assistant link with its chat-dots icon visibly
