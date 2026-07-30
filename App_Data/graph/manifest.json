@@ -1,0 +1,19 @@
+{
+  "lastBuildUtc": "2026-07-30T23:44:49.647175Z",
+  "lastMutationUtc": null,
+  "totalNodes": 674,
+  "totalEdges": 1051,
+  "nodeCounts": {
+    "Day": 156,
+    "Requester": 42,
+    "Status": 5,
+    "Ticket": 109,
+    "TicketDetail": 362
+  },
+  "edgeCounts": {
+    "HAS_DETAIL": 362,
+    "HAS_STATUS": 109,
+    "OCCURRED_ON": 471,
+    "REQUESTED_BY": 109
+  }
+}

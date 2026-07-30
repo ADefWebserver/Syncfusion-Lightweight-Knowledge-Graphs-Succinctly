@@ -8,6 +8,7 @@ using Syncfusion.Blazor.SmartComponents;
 using SyncfusionHelpDesk.Components;
 using SyncfusionHelpDesk.Components.Account;
 using SyncfusionHelpDesk.Data;
+using SyncfusionHelpDesk.Graph;
 using SyncfusionHelpDesk.Models;
 
 namespace SyncfusionHelpDesk
@@ -77,6 +78,12 @@ namespace SyncfusionHelpDesk
             builder.Services.AddScoped<SyncfusionHelpDeskService>();
             builder.Services.AddScoped<EmailSender>();
 
+            // Knowledge-graph storage layer.
+            builder.Services.Configure<GraphOptions>(
+                builder.Configuration.GetSection("Graph"));
+            builder.Services.AddScoped<HelpDeskGraphBuilder>();
+            builder.Services.AddSingleton<GraphStore>();
+
             // Ensure the knowledge-graph output directory exists so the builder can
             // write graph files atomically without a first-run failure.
             var graphPath = builder.Configuration["Graph:OutputPath"] ?? "App_Data/graph";
@@ -84,6 +91,20 @@ namespace SyncfusionHelpDesk
                 Path.Combine(builder.Environment.ContentRootPath, graphPath));
 
             var app = builder.Build();
+
+            // Build graph.json on start-up when it does not already exist, then
+            // load the snapshot into the in-memory GraphStore.
+            var graphFilePath = GraphFile.ResolvePath(
+                graphPath, app.Environment.ContentRootPath);
+            if (!File.Exists(graphFilePath))
+            {
+                using var graphScope = app.Services.CreateScope();
+                var graphBuilder = graphScope.ServiceProvider
+                    .GetRequiredService<HelpDeskGraphBuilder>();
+                await graphBuilder.BuildAsync();
+            }
+
+            await app.Services.GetRequiredService<GraphStore>().ReloadAsync();
 
             // Configure the HTTP request pipeline.
             if (app.Environment.IsDevelopment())

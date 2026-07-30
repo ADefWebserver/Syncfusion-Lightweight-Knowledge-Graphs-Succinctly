@@ -1,0 +1,16 @@
+{
+  "description": "Knowledge graph derived from the SyncfusionHelpDesk help-desk database. Nodes and edges are generated deterministically from help-desk tickets and their details.",
+  "nodeLabels": {
+    "Ticket": "A help-desk ticket opened by a requester.",
+    "TicketDetail": "A comment or detail attached to a ticket.",
+    "Requester": "The email address that opened one or more tickets.",
+    "Status": "A ticket status value (for example New or Closed).",
+    "Day": "A distinct calendar day on which a ticket or detail occurred."
+  },
+  "edgeLabels": {
+    "REQUESTED_BY": "Connects a Ticket to the Requester who opened it.",
+    "HAS_DETAIL": "Connects a Ticket to one of its TicketDetail comments.",
+    "HAS_STATUS": "Connects a Ticket to its current Status.",
+    "OCCURRED_ON": "Connects a Ticket or TicketDetail to the Day it occurred."
+  }
+}
