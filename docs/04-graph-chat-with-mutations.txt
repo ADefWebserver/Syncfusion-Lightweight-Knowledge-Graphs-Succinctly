@@ -45,48 +45,69 @@ be affected, and any validation warnings. With confirmed set to true, the operat
 applies the change, rebuilds the graph indexes, updates the manifest, appends an audit
 entry, and returns the resulting state.
 
-Document the supported operations and their validation rules. UpdateTicket changes a
-ticket's status or description. LinkTickets adds a LINKED_TO edge but rejects
-self-links and duplicates in either direction. AddKnowledgeArticle creates a
-KnowledgeArticle node. ReferenceArticle adds a REFERENCES_ARTICLE edge and rejects
-duplicates. RecordResolution creates a Resolution node and its RESOLVED_BY edge.
-DeleteArticle removes an article and its incoming edges, but it must be rejected while
-REFERENCES_ARTICLE edges still point to the article unless cascade is true.
-UpdateNodeContent sets one Data property, or the label, of an existing editable
-knowledge-layer node. Every new edge requires existing endpoints of the expected
-types.
+Put the shared mutation models in Services/Graph/MutationModels.cs, and make them
+immutable records rather than mutable classes, so a preview cannot be altered between
+the moment it is shown to a person and the moment the change is applied:
 
-Put the shared mutation models in Services/Graph/MutationModels.cs. MutationStatus
-should have Rejected, PreviewOnly, and Applied values. MutationPreview should contain
-Summary, AffectedFiles, and Warnings. MutationResult should contain Status, Preview,
-and Errors, with factory helpers named Rejected, PreviewOnly, and Applied.
+- MutationStatus is an enum with Rejected, PreviewOnly, and Applied.
+- MutationPreview is a record with Summary, IReadOnlyList<string> AffectedFiles, and
+   IReadOnlyList<string> Warnings.
+- MutationResult is a record with Status, MutationPreview? Preview, and
+   IReadOnlyList<string> Errors, plus static factory helpers named Rejected,
+   PreviewOnly, and Applied.
 
 Make Services/Graph/GraphMutationService.cs the only component allowed to write graph
-files. Protect the write path with a static SemaphoreSlim so concurrent mutations
+files. Give it a private AuditFileName constant and a private PreviewFiles array
+holding graph.json, manifest.json, and audit.log, so every preview reports the same
+file list. Protect the write path with a static SemaphoreSlim so concurrent mutations
 cannot interleave even though the service is registered as scoped. Keep a
 ReadOnlyNodeTypes set containing Ticket, TicketDetail, Requester, Status, and Day, and
-use it to reject forbidden targets in UpdateNodeContent and in every knowledge-layer
-mutation. Keep a separate EditableTicketProperties set containing status and
-description, used only by UpdateTicket. Inject IDbContextFactory
-<SyncfusionHelpDeskContext> so UpdateTicket can reach the database.
+a separate EditableTicketProperties set containing status and description. Inject
+GraphStore, IOptions<GraphOptions>, IWebHostEnvironment, and
+IDbContextFactory<SyncfusionHelpDeskContext>.
 
-Every public method on GraphMutationService should follow the same preview and confirm
-flow. Once confirmed, work from a GraphDocument freshly loaded from disk rather than
-the one held in GraphStore, so a rejected or preview-only call can never leave the
-in-memory graph half-changed. Then atomically write graph.json and manifest.json
-through a temporary file and move, reload GraphStore, and append one line to audit.log.
-Put that shared tail in a private CommitAsync helper.
+Structure every mutation the same way, because the ordering is the safety model:
+
+- Put all of the validation rules in a local function, MutationResult? Validate
+   (GraphDocument doc), that returns null when the request is acceptable and a
+   rejection otherwise.
+- Load the document from disk, call Validate, and return early on rejection. Do not
+   take the lock for this: a preview only reads, so previews never contend.
+- Build the MutationPreview and return MutationResult.PreviewOnly when confirmed is
+   false. Nothing has been written at this point, to SQL or to disk.
+- When confirmed is true, take the lock, re-load the document from disk, and call
+   Validate a second time. This matters: minutes can pass between a preview appearing
+   on screen and a person clicking Approve, and the ticket may have been closed in the
+   help-desk UI in the meantime. Re-validating under the lock means an approval can
+   only ever apply to a state that still holds.
+- Apply the change, then call a private CommitAsync helper.
+- Release the lock in a finally block.
+
+Always work on a GraphDocument freshly loaded from disk rather than the one held in
+GraphStore, so a rejected or preview-only call can never leave the in-memory graph
+half-changed.
+
+CommitAsync is the shared tail of every applied mutation. It writes graph.json
+atomically, writes manifest.json with the new lastMutationUtc, calls
+GraphStore.ReloadAsync, and appends one tab-separated line to audit.log containing the
+UTC timestamp in round-trip format and a detail string such as
+"UpdateTicket id=ticket:42 property=status".
 
 Specify UpdateTicket(ticketId, propertyName, value, confirmed) in detail, because it
-is the only mutation that leaves the graph files. Validate in this order: the node
-exists; its Type is Ticket; propertyName is status or description; when the property
-is status, the value matches one of the statuses in HelpDeskStatusData.Statuses,
-compared case-insensitively, and the rejection message lists the valid ones; when the
-property is description, the value is not blank; and the node id parses as
-ticket:<number> so the database key can be recovered. Only after the preview is
-confirmed, load the HelpDeskTicket by that key, set TicketStatus or TicketDescription,
-and call SaveChangesAsync.
+is the only mutation that leaves the graph files. Its Validate function should check,
+in order: the node exists; its Type is Ticket; propertyName is in
+EditableTicketProperties; when the property is status, the value matches an entry in
+HelpDeskStatusData.Statuses compared case-insensitively, and the rejection message
+lists the valid ones; when the property is description, the value is not blank; and
+the node id parses as ticket:<number> so the database key can be recovered.
 
+Have the status check capture the canonical ID from the matching HelpDeskStatusData
+entry rather than trusting the string the model sent, and write that canonical value.
+A model that asks for "closed" should result in "Closed" in the database, so the
+graph's status: ids stay consistent with the ones a full rebuild would produce.
+
+Once confirmed, load the HelpDeskTicket by the recovered key, set TicketStatus or
+TicketDescription, and call SaveChangesAsync. If the row has since disappeared, reject.
 Then mirror the change into the graph in place. Do not rebuild the graph from the
 database to pick up the edit: a full rebuild would discard the whole knowledge layer,
 because articles, resolutions, and links exist only in graph.json. For a description
@@ -98,35 +119,68 @@ edge leaving the ticket, and adds the new one. Note in the plan that repointing 
 leave an orphaned Status node behind when the last ticket moves off a status, and that
 the next full rebuild removes it.
 
+Also implement, following the same shape: UpdateNodeContent(nodeId, propertyName,
+value) which sets one Data property or the label of an editable node and rejects any
+type in ReadOnlyNodeTypes; LinkTickets(fromTicketId, toTicketId) which adds a
+LINKED_TO edge and rejects self-links and duplicates in either direction;
+AddKnowledgeArticle(title, content) which creates a KnowledgeArticle node with the id
+article:<guid>; ReferenceArticle(ticketId, articleId) which adds a REFERENCES_ARTICLE
+edge and rejects duplicates; RecordResolution(ticketId, content) which creates a
+Resolution node with the id resolution:<guid> plus its RESOLVED_BY edge; and
+DeleteArticle(articleId, cascade) which removes an article and its incoming edges but
+is rejected while REFERENCES_ARTICLE edges still point at it unless cascade is true,
+and which reports the number of edges it will remove as a preview warning. Every new
+edge requires existing endpoints of the expected types.
+
 Expose exactly two write tools to the AI model. Define IGraphWriteTools and
 GraphWriteTools in Services/AI/GraphTools, with UpdateNodeContent(nodeId,
 propertyName, value) for the knowledge layer and UpdateTicket(ticketId, propertyName,
-value) for tickets. The service supports the full mutation domain, but the model never
-sees LinkTickets, AddKnowledgeArticle, ReferenceArticle, RecordResolution, or
-DeleteArticle: it cannot create or delete nodes, and it cannot add, change, or remove
-an edge. The [Description] on each tool must say what it can change, name the valid
-statuses for UpdateTicket, state that UpdateTicket writes to the SQL database and
-mirrors into the graph, state that database-derived nodes are otherwise read-only, and
-say that calling the tool only produces a preview a human must approve.
+value) for tickets. Both must return Task<MutationResult> rather than a formatted
+string, so the model receives the status and any error messages as structured data
+that cannot drift out of sync with the service. The service supports the full mutation
+domain, but the model never sees LinkTickets, AddKnowledgeArticle, ReferenceArticle,
+RecordResolution, or DeleteArticle: it cannot create or delete nodes, and it cannot
+add, change, or remove an edge.
+
+The [Description] on each tool must say what it can change, name the valid statuses
+for UpdateTicket, state that UpdateTicket writes to the SQL database and mirrors into
+the graph, state that database-derived nodes are otherwise read-only, and say that
+calling the tool only produces a preview a human must approve.
 
 Enforce the approval boundary in the class rather than in the prompt. Both
-model-invoked methods must hard-code confirmed: false and stash the result as a
-pending proposal. Because there are now two kinds of proposal, define a MutationKind
-enum with NodeContent and Ticket values and a PendingMutation record carrying Kind,
-NodeId, PropertyName, Value, and Preview, so the approval step can dispatch to the
-right writer. Give the interface a Pending property, an ApplyPendingAsync method, and
-a ClearPending method. ApplyPendingAsync is the only place in the whole codebase that
-passes confirmed: true, and it switches on Kind to call either UpdateTicket or
-UpdateNodeContent. A rejected proposal clears Pending and writes nothing.
+model-invoked methods must hard-code confirmed: false, and must stash the result as a
+pending proposal only when the returned status is PreviewOnly, so a rejected request
+can never leave something approvable behind. Because there are now two kinds of
+proposal, define a MutationKind enum with NodeContent and Ticket values and a
+PendingMutation record carrying Kind, NodeId, PropertyName, Value, and Preview, so the
+approval step can dispatch to the right writer. Give the interface a Pending property,
+a ClearPending method, and an ApplyPendingAsync method. ApplyPendingAsync is the only
+place in the whole codebase that passes confirmed: true, and it switches on Kind to
+call either UpdateTicket or UpdateNodeContent.
 
-Add a GraphToolRegistration.CreateTools(read, write) overload that combines both write
-tools with the existing read-only traversal tools. Update GraphSystemPrompt to
-describe the optional knowledge layer, both write tools, and the valid ticket
-statuses. State the boundary from both directions: the model may update an existing
-Ticket's status or description with UpdateTicket, and it must never claim to create or
-delete Ticket, TicketDetail, Requester, Status, or Day nodes. Instruct the model to
-use a write tool only when the user has clearly requested a change and to report the
-tool result exactly.
+Add a GraphToolRegistration.CreateTools(read, write) overload that appends both write
+tools to the eight read-only traversal tools.
+
+CRITICAL - GraphChat.razor must call the two-argument CreateTools(GraphTools,
+GraphWriteTools) overload when it builds ChatOptions.Tools. Leaving the single-argument
+read-only call in place is a silent failure, not a compile error: the service is still
+registered, the page still injects IGraphWriteTools, the approval dialog is still on
+the page, and the system prompt still tells the model it has two write tools, but the
+model never receives them. Pending is never populated, the dialog never appears, and
+the model - having been told it can update tickets - will either refuse for the wrong
+reason or announce a change that never happened. State this explicitly in the plan and
+make it an acceptance criterion phrased as observable behavior.
+
+Update GraphSystemPrompt to describe the optional knowledge layer and both write
+tools. Give the write tools their own section, and the rules governing them a separate
+"Write rules" section rather than folding them into the tool descriptions: a tool
+description is read while the model is choosing what to call, while a rule is read as
+policy. The rules must say that the model MAY update an existing Ticket's status or
+description but only when the user has clearly requested a change; that it must NEVER
+claim to create or delete Ticket, TicketDetail, Requester, Status, or Day nodes, and
+cannot add, change, or remove edges; and that calling a write tool does not apply
+anything, only produces a preview a person must approve, so it must report the tool
+result exactly and must not claim a change was applied.
 
 Create Components/Shared/MutationApproval.razor as a modal Syncfusion SfDialog. It
 should display the MutationPreview summary, affected files, and warnings, and offer
@@ -135,23 +189,26 @@ OnReject parameters. Treat dismissing the dialog with the close icon as a reject
 so no file can change without an explicit approval. Keep the component ignorant of
 graphs, tools, and files: it takes a preview and two callbacks and nothing more.
 
-In GraphChat.razor, call ClearPending before each turn so a stale proposal from an
-earlier turn cannot be approved by accident. After the model's response returns, check
-IGraphWriteTools.Pending and, when it is populated, show the approval dialog. Call
-ApplyPendingAsync only from the approve callback, and ClearPending from the reject
-callback. Rejecting or closing must leave every file and the database unchanged.
+In GraphChat.razor, call ClearPending at the start of each turn so a stale proposal
+from an earlier turn cannot be approved by accident. After the model's response
+returns and has been converted to HTML, check IGraphWriteTools.Pending and, when it is
+populated, show the approval dialog. Call ApplyPendingAsync only from the approve
+callback, and ClearPending from the reject callback. Rejecting or closing must leave
+every file and the database unchanged.
 
 Finally, register GraphMutationService as scoped and map IGraphWriteTools to
-GraphWriteTools in Program.cs. Build the chat tool list with both the read and write
-tool sets while preserving the approval boundary described above.
+GraphWriteTools in Program.cs.
 
 List acceptance criteria. A preview call with confirmed == false writes nothing to
-disk and nothing to SQL. No change is applied until the human clicks Approve.
-Rejecting, or closing the dialog, leaves every file and the database unchanged.
-Updating a ticket's status changes TicketStatus in SQL, updates the node's status
-value, and repoints the HAS_STATUS edge. Updating a ticket's description changes
-TicketDescription in SQL and re-truncates the node label to 60 characters. An invalid
-status is rejected with a message naming the valid ones. An attempt to edit a
-TicketDetail, Requester, Status, or Day node is rejected. An applied ticket edit does
-not discard existing knowledge-layer nodes or edges. Every applied mutation writes
-graph.json and manifest.json atomically and appends exactly one line to audit.log.
+disk and nothing to SQL. Asking the assistant to change a ticket produces an approval
+dialog, which proves the write tools were actually registered with the model. No
+change is applied until the human clicks Approve. Rejecting, or closing the dialog,
+leaves every file and the database unchanged. Updating a ticket's status changes
+TicketStatus in SQL, updates the node's status value, and repoints the HAS_STATUS
+edge. A status supplied in the wrong case is stored in its canonical form. Updating a
+ticket's description changes TicketDescription in SQL and re-truncates the node label
+to 60 characters. An invalid status is rejected with a message naming the valid ones.
+An attempt to edit a TicketDetail, Requester, Status, or Day node is rejected. An
+applied ticket edit does not discard existing knowledge-layer nodes or edges. Every
+applied mutation writes graph.json and manifest.json atomically and appends exactly
+one line to audit.log.
