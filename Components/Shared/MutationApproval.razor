@@ -1,0 +1,92 @@
+@using SyncfusionHelpDesk.Services.Graph
+@using Syncfusion.Blazor.Popups
+@using Syncfusion.Blazor.Buttons
+
+@* A modal preview-and-approve dialog. It knows nothing about graphs, tools, or
+   files: it takes a preview and two callbacks. Dismissing with the close icon is
+   treated as a rejection, so no file can change without an explicit approval. *@
+<SfDialog Width="500px"
+          IsModal="true"
+          ShowCloseIcon="true"
+          Visible="Visible"
+          VisibleChanged="OnVisibleChanged">
+    <DialogTemplates>
+        <Header>Approve change?</Header>
+        <Content>
+            @if (Preview is not null)
+            {
+                <p>@Preview.Summary</p>
+
+                @if (Preview.AffectedFiles.Count > 0)
+                {
+                    <p class="mb-1"><strong>Files affected</strong></p>
+                    <ul>
+                        @foreach (var file in Preview.AffectedFiles)
+                        {
+                            <li>@file</li>
+                        }
+                    </ul>
+                }
+
+                @if (Preview.Warnings.Count > 0)
+                {
+                    <p class="mb-1"><strong>Warnings</strong></p>
+                    <ul>
+                        @foreach (var warning in Preview.Warnings)
+                        {
+                            <li>@warning</li>
+                        }
+                    </ul>
+                }
+            }
+        </Content>
+        <FooterTemplate>
+            <SfButton CssClass="e-primary" OnClick="ApproveAsync">Approve</SfButton>
+            <SfButton OnClick="RejectAsync">Reject</SfButton>
+        </FooterTemplate>
+    </DialogTemplates>
+</SfDialog>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+    [Parameter] public MutationPreview? Preview { get; set; }
+    [Parameter] public EventCallback OnApprove { get; set; }
+    [Parameter] public EventCallback OnReject { get; set; }
+
+    private async Task ApproveAsync()
+    {
+        await SetVisibleAsync(false);
+        await OnApprove.InvokeAsync();
+    }
+
+    private async Task RejectAsync()
+    {
+        await SetVisibleAsync(false);
+        await OnReject.InvokeAsync();
+    }
+
+    // Fired by the dialog itself, including the close icon. A close while the
+    // dialog is showing is an implicit rejection.
+    private async Task OnVisibleChanged(bool visible)
+    {
+        if (visible || !Visible)
+        {
+            return;
+        }
+
+        await SetVisibleAsync(false);
+        await OnReject.InvokeAsync();
+    }
+
+    private async Task SetVisibleAsync(bool value)
+    {
+        if (Visible == value)
+        {
+            return;
+        }
+
+        Visible = value;
+        await VisibleChanged.InvokeAsync(value);
+    }
+}

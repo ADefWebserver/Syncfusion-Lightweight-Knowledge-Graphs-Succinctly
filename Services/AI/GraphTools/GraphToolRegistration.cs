@@ -19,4 +19,15 @@ public static class GraphToolRegistration
         AIFunctionFactory.Create(tools.GetNeighbors),
         AIFunctionFactory.Create(tools.Stats),
     };
+
+    /// <summary>
+    /// Appends the two write tools to the eight read-only traversal tools.
+    /// </summary>
+    public static IList<AITool> CreateTools(IGraphChatTools read, IGraphWriteTools write)
+    {
+        var tools = CreateTools(read);
+        tools.Add(AIFunctionFactory.Create(write.UpdateNodeContent));
+        tools.Add(AIFunctionFactory.Create(write.UpdateTicket));
+        return tools;
+    }
 }

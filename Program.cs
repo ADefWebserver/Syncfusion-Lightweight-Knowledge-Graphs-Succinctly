@@ -12,6 +12,7 @@ using SyncfusionHelpDesk.Graph;
 using SyncfusionHelpDesk.Models;
 using SyncfusionHelpDesk.Services.AI;
 using SyncfusionHelpDesk.Services.AI.GraphTools;
+using SyncfusionHelpDesk.Services.Graph;
 
 namespace SyncfusionHelpDesk
 {
@@ -96,6 +97,11 @@ namespace SyncfusionHelpDesk
             builder.Services.AddSingleton<IChatClient>(sp =>
                 ChatClientFactory.Create(builder.Configuration.GetSection("AI")));
             builder.Services.AddScoped<IGraphChatTools, GraphChatTools>();
+
+            // Controlled write path. GraphMutationService is the sole writer of
+            // graph files; GraphWriteTools enforces the human-approval boundary.
+            builder.Services.AddScoped<GraphMutationService>();
+            builder.Services.AddScoped<IGraphWriteTools, GraphWriteTools>();
 
             // Ensure the knowledge-graph output directory exists so the builder can
             // write graph files atomically without a first-run failure.

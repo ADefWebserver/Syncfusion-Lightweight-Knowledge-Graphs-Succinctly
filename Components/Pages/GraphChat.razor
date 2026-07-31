@@ -2,11 +2,14 @@
 @rendermode InteractiveServer
 @using Microsoft.Extensions.AI
 @using Syncfusion.Blazor.InteractiveChat
+@using SyncfusionHelpDesk.Components.Shared
 @using SyncfusionHelpDesk.Services.AI.GraphTools
+@using SyncfusionHelpDesk.Services.Graph
 @using Markdig
 @using ChatMessage = Microsoft.Extensions.AI.ChatMessage
 @inject IChatClient ChatClient
 @inject IGraphChatTools GraphTools
+@inject IGraphWriteTools GraphWriteTools
 
 <PageTitle>Graph Assistant</PageTitle>
 
@@ -14,7 +17,8 @@
     <Authorized>
         <h1>Graph Assistant</h1>
         <p class="text-muted">
-            Ask read-only questions about the help-desk knowledge graph.
+            Ask questions about the help-desk knowledge graph. Any change you
+            request is previewed for your approval before it is applied.
         </p>
 
         <div class="graph-chat-container">
@@ -22,6 +26,12 @@
                             PromptRequested="@PromptRequestedAsync">
             </SfAIAssistView>
         </div>
+
+        <MutationApproval Visible="_approvalVisible"
+                          VisibleChanged="@(v => _approvalVisible = v)"
+                          Preview="_pendingPreview"
+                          OnApprove="ApproveAsync"
+                          OnReject="RejectAsync" />
     </Authorized>
     <NotAuthorized>
         <h1>Graph Assistant</h1>
@@ -47,10 +57,36 @@
         new ChatMessage(ChatRole.System, GraphSystemPrompt.Text),
     };
 
+    private bool _approvalVisible;
+    private MutationPreview? _pendingPreview;
+
     private async Task PromptRequestedAsync(AssistViewPromptRequestedEventArgs args)
     {
+        // Clear any stale proposal so it cannot be approved by accident.
+        GraphWriteTools.ClearPending();
+
         var responseText = await GetAssistantResponseAsync(args.Prompt);
         args.Response = Markdown.ToHtml(responseText, _markdownPipeline);
+
+        if (GraphWriteTools.Pending is { } pending)
+        {
+            _pendingPreview = pending.Preview;
+            _approvalVisible = true;
+        }
+    }
+
+    private async Task ApproveAsync()
+    {
+        _approvalVisible = false;
+        await GraphWriteTools.ApplyPendingAsync();
+        _pendingPreview = null;
+    }
+
+    private void RejectAsync()
+    {
+        _approvalVisible = false;
+        _pendingPreview = null;
+        GraphWriteTools.ClearPending();
     }
 
     private async Task<string> GetAssistantResponseAsync(string prompt)
