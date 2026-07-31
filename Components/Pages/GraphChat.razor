@@ -1,0 +1,81 @@
+@page "/graphchat"
+@rendermode InteractiveServer
+@using Microsoft.Extensions.AI
+@using Syncfusion.Blazor.InteractiveChat
+@using SyncfusionHelpDesk.Services.AI.GraphTools
+@using Markdig
+@using ChatMessage = Microsoft.Extensions.AI.ChatMessage
+@inject IChatClient ChatClient
+@inject IGraphChatTools GraphTools
+
+<PageTitle>Graph Assistant</PageTitle>
+
+<AuthorizeView>
+    <Authorized>
+        <h1>Graph Assistant</h1>
+        <p class="text-muted">
+            Ask read-only questions about the help-desk knowledge graph.
+        </p>
+
+        <div class="graph-chat-container">
+            <SfAIAssistView PromptSuggestions="@_promptSuggestions"
+                            PromptRequested="@PromptRequestedAsync">
+            </SfAIAssistView>
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        <h1>Graph Assistant</h1>
+        <p>Please <a href="Account/Login">sign in</a> to use the Graph Assistant.</p>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private static readonly MarkdownPipeline _markdownPipeline =
+        new MarkdownPipelineBuilder()
+            .UseAdvancedExtensions()
+            .Build();
+
+    private readonly List<string> _promptSuggestions = new()
+    {
+        "How many tickets has this email opened?",
+        "List the open tickets.",
+        "Show graph statistics.",
+    };
+
+    private readonly List<ChatMessage> _history = new()
+    {
+        new ChatMessage(ChatRole.System, GraphSystemPrompt.Text),
+    };
+
+    private async Task PromptRequestedAsync(AssistViewPromptRequestedEventArgs args)
+    {
+        var responseText = await GetAssistantResponseAsync(args.Prompt);
+        args.Response = Markdown.ToHtml(responseText, _markdownPipeline);
+    }
+
+    private async Task<string> GetAssistantResponseAsync(string prompt)
+    {
+        _history.Add(new ChatMessage(ChatRole.User, prompt));
+
+        try
+        {
+            var options = new ChatOptions
+            {
+                Tools = GraphToolRegistration.CreateTools(GraphTools),
+            };
+
+            var response = await ChatClient.GetResponseAsync(_history, options);
+
+            _history.AddRange(response.Messages);
+
+            return string.IsNullOrWhiteSpace(response.Text)
+                ? "I could not find an answer to that question in the graph."
+                : response.Text;
+        }
+        catch (Exception ex)
+        {
+            return "The request failed. Please verify the OpenAI API key in the " +
+                   $"\"AI\" configuration section. Details: {ex.Message}";
+        }
+    }
+}

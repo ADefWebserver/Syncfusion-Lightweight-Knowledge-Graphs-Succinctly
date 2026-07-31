@@ -10,6 +10,8 @@ using SyncfusionHelpDesk.Components.Account;
 using SyncfusionHelpDesk.Data;
 using SyncfusionHelpDesk.Graph;
 using SyncfusionHelpDesk.Models;
+using SyncfusionHelpDesk.Services.AI;
+using SyncfusionHelpDesk.Services.AI.GraphTools;
 
 namespace SyncfusionHelpDesk
 {
@@ -87,6 +89,13 @@ namespace SyncfusionHelpDesk
                 builder.Configuration.GetSection("Graph"));
             builder.Services.AddScoped<HelpDeskGraphBuilder>();
             builder.Services.AddSingleton<GraphStore>();
+
+            // Read-only graph chat assistant. IChatClient must be a singleton
+            // because the singleton SyncfusionAIService consumes it; a scoped
+            // registration would throw a DI lifetime exception at start-up.
+            builder.Services.AddSingleton<IChatClient>(sp =>
+                ChatClientFactory.Create(builder.Configuration.GetSection("AI")));
+            builder.Services.AddScoped<IGraphChatTools, GraphChatTools>();
 
             // Ensure the knowledge-graph output directory exists so the builder can
             // write graph files atomically without a first-run failure.
