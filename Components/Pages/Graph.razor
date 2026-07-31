@@ -1,0 +1,311 @@
+@page "/graph"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using SyncfusionHelpDesk.Graph
+@inject IJSRuntime JS
+@inject GraphStore Store
+@inject HelpDeskGraphBuilder Builder
+
+<PageTitle>Knowledge Graph</PageTitle>
+
+<div class="graph-toolbar">
+    <button class="btn btn-primary" @onclick="RebuildAsync" disabled="@_isRebuilding">
+        @(_isRebuilding ? "Rebuilding..." : "Rebuild Graph")
+    </button>
+    <button class="btn btn-outline-secondary" @onclick="ToggleFullScreenAsync">
+        Full Screen
+    </button>
+    <span class="badge bg-info text-dark">Nodes: @_nodeCount</span>
+    <span class="badge bg-info text-dark">Edges: @_edgeCount</span>
+    <span class="text-muted">Generated: @Store.GeneratedUtc.ToString("u")</span>
+</div>
+
+<div class="graph-types">
+    @foreach (var type in _availableTypes)
+    {
+        <label class="graph-type-checkbox">
+            <input type="checkbox"
+                   checked="@_visibleTypes.Contains(type)"
+                   @onchange="() => ToggleType(type)" />
+            @type
+        </label>
+    }
+</div>
+
+<div class="graph-layout">
+    <div id="cy" class="graph-viewport"></div>
+
+    @if (_selectedNode is not null)
+    {
+        <div class="graph-detail-panel">
+            <h4>@_selectedNode.Label</h4>
+            <p class="text-muted">Type: @_selectedNode.Type</p>
+
+            <h5>Properties</h5>
+            <ul>
+                @foreach (var kvp in _selectedNode.Data)
+                {
+                    <li><strong>@kvp.Key:</strong> @(kvp.Value?.ToString())</li>
+                }
+            </ul>
+
+            <h5>Connected Nodes</h5>
+            @if (_neighbors.Count == 0)
+            {
+                <p class="text-muted">No connections.</p>
+            }
+            else
+            {
+                <ul>
+                    @foreach (var neighbor in _neighbors)
+                    {
+                        <li>
+                            <span class="badge bg-secondary">@neighbor.Relationship</span>
+                            @neighbor.Node.Label
+                            <span class="text-muted">(@neighbor.Node.Type)</span>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private const string ContainerId = "cy";
+
+    private static readonly string[] DefaultCoreTypes = { "Ticket", "Requester", "Status" };
+
+    private DotNetObjectReference<Graph>? _dotNetRef;
+
+    private List<string> _availableTypes = new();
+    private HashSet<string> _visibleTypes = new(StringComparer.Ordinal);
+
+    private GraphNode? _selectedNode;
+    private List<Neighbor> _neighbors = new();
+
+    private bool _isRebuilding;
+    private bool _initialized;
+
+    private int _nodeCount;
+    private int _edgeCount;
+
+    protected override void OnInitialized()
+    {
+        RefreshAvailableTypes(resetVisible: true);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await InitializeDiagramAsync();
+        }
+    }
+
+    private void RefreshAvailableTypes(bool resetVisible)
+    {
+        _availableTypes = Store.NodeTypes.OrderBy(t => t, StringComparer.Ordinal).ToList();
+
+        if (resetVisible)
+        {
+            var core = _availableTypes.Where(t => DefaultCoreTypes.Contains(t)).ToList();
+            _visibleTypes = core.Count > 0
+                ? new HashSet<string>(core, StringComparer.Ordinal)
+                : new HashSet<string>(_availableTypes, StringComparer.Ordinal);
+        }
+        else
+        {
+            _visibleTypes.IntersectWith(_availableTypes);
+        }
+    }
+
+    private object BuildGraphData()
+    {
+        var nodes = Store.Nodes
+            .Where(n => _visibleTypes.Contains(n.Type))
+            .ToList();
+
+        var visibleIds = new HashSet<string>(nodes.Select(n => n.Id), StringComparer.Ordinal);
+
+        var nodeData = nodes
+            .Select(n => new { id = n.Id, label = n.Label, type = n.Type })
+            .ToList();
+
+        var edgeData = Store.Edges
+            .Where(e => visibleIds.Contains(e.From) && visibleIds.Contains(e.To))
+            .Select(e => new
+            {
+                id = $"{e.From}_{e.Type}_{e.To}",
+                source = e.From,
+                target = e.To,
+                label = e.Type,
+            })
+            .ToList();
+
+        _nodeCount = nodeData.Count;
+        _edgeCount = edgeData.Count;
+
+        return new { nodes = nodeData, edges = edgeData };
+    }
+
+    private async Task InitializeDiagramAsync()
+    {
+        var data = BuildGraphData();
+        await JS.InvokeVoidAsync("graphRenderer.initCytoscape", ContainerId, data, _dotNetRef);
+        _initialized = true;
+    }
+
+    private async Task ToggleType(string type)
+    {
+        if (!_visibleTypes.Remove(type))
+        {
+            _visibleTypes.Add(type);
+        }
+
+        _selectedNode = null;
+        _neighbors = new();
+
+        var data = BuildGraphData();
+        await JS.InvokeVoidAsync("graphRenderer.updateGraph", ContainerId, data);
+    }
+
+    [JSInvokable]
+    public void OnNodeClicked(string nodeId)
+    {
+        var node = Store.GetNode(nodeId);
+        if (node is null)
+        {
+            return;
+        }
+
+        _selectedNode = node;
+        _neighbors = new();
+
+        foreach (var edge in Store.OutEdges(nodeId))
+        {
+            var other = Store.GetNode(edge.To);
+            if (other is not null)
+            {
+                _neighbors.Add(new Neighbor(other, edge.Type));
+            }
+        }
+
+        foreach (var edge in Store.InEdges(nodeId))
+        {
+            var other = Store.GetNode(edge.From);
+            if (other is not null)
+            {
+                _neighbors.Add(new Neighbor(other, edge.Type));
+            }
+        }
+
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnBackgroundClicked()
+    {
+        _selectedNode = null;
+        _neighbors = new();
+        StateHasChanged();
+    }
+
+    private async Task RebuildAsync()
+    {
+        _isRebuilding = true;
+        StateHasChanged();
+
+        try
+        {
+            await Builder.BuildAsync();
+            await Store.ReloadAsync();
+
+            RefreshAvailableTypes(resetVisible: false);
+
+            _selectedNode = null;
+            _neighbors = new();
+
+            await InitializeDiagramAsync();
+        }
+        finally
+        {
+            _isRebuilding = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleFullScreenAsync()
+    {
+        await JS.InvokeVoidAsync("graphRenderer.toggleFullScreen", ContainerId);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_initialized)
+            {
+                await JS.InvokeVoidAsync("graphRenderer.destroyCytoscape", ContainerId);
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // Circuit already ended; nothing to clean up on the browser side.
+        }
+
+        _dotNetRef?.Dispose();
+    }
+
+    private sealed record Neighbor(GraphNode Node, string Relationship);
+}
+
+<style>
+    .graph-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin-bottom: 0.75rem;
+    }
+
+    .graph-types {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-bottom: 0.75rem;
+    }
+
+    .graph-type-checkbox {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        cursor: pointer;
+    }
+
+    .graph-layout {
+        display: flex;
+        gap: 1rem;
+        align-items: stretch;
+    }
+
+    .graph-viewport {
+        flex: 1 1 auto;
+        height: calc(100vh - 220px);
+        min-height: 400px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        background-color: #fafafa;
+    }
+
+    .graph-detail-panel {
+        flex: 0 0 320px;
+        max-height: calc(100vh - 220px);
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        padding: 1rem;
+        background-color: #ffffff;
+    }
+</style>
