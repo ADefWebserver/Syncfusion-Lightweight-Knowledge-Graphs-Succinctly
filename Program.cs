@@ -12,6 +12,7 @@ using SyncfusionHelpDesk.Graph;
 using SyncfusionHelpDesk.Models;
 using SyncfusionHelpDesk.Services.AI;
 using SyncfusionHelpDesk.Services.AI.GraphTools;
+using SyncfusionHelpDesk.Services.Graph;
 
 namespace SyncfusionHelpDesk
 {
@@ -69,6 +70,8 @@ namespace SyncfusionHelpDesk
             }
 
             builder.Services.AddScoped<IGraphChatTools, GraphChatTools>();
+            builder.Services.AddScoped<GraphMutationService>();
+            builder.Services.AddScoped<IGraphWriteTools, GraphWriteTools>();
 
             // Get SYNCFUSION_APIKEY from appsettings.json
             var SyncfusionApiKey = builder.Configuration["SYNCFUSION_APIKEY"];

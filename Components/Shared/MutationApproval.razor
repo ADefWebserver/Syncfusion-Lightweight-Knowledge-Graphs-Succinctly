@@ -1,0 +1,88 @@
+@using SyncfusionHelpDesk.Services.Graph
+
+<SfDialog Width="500px"
+          IsModal="true"
+          ShowCloseIcon="true"
+          Visible="Visible">
+    <DialogEvents OnClose="HandleCloseAsync" />
+    <DialogTemplates>
+        <Header>Approve change?</Header>
+        <Content>
+            @if (Preview is not null)
+            {
+                <p>@Preview.Summary</p>
+
+                @if (Preview.Warnings.Count > 0)
+                {
+                    <div class="alert alert-warning" role="alert">
+                        <ul class="mb-0">
+                            @foreach (var warning in Preview.Warnings)
+                            {
+                                <li>@warning</li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                <p class="text-muted mb-1">Files that would be affected:</p>
+                <ul>
+                    @foreach (var file in Preview.AffectedFiles)
+                    {
+                        <li>@file</li>
+                    }
+                </ul>
+            }
+        </Content>
+        <FooterTemplate>
+            <SfButton CssClass="e-primary" OnClick="ApproveAsync">Approve</SfButton>
+            <SfButton OnClick="RejectAsync">Reject</SfButton>
+        </FooterTemplate>
+    </DialogTemplates>
+</SfDialog>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+    [Parameter] public MutationPreview? Preview { get; set; }
+    [Parameter] public EventCallback OnApprove { get; set; }
+    [Parameter] public EventCallback OnReject { get; set; }
+
+    // Guards the close event so an explicit button click is not double-handled
+    // as a close-icon rejection when the dialog is hidden programmatically.
+    private bool _decisionMade;
+
+    private async Task ApproveAsync()
+    {
+        _decisionMade = true;
+        await SetVisibleAsync(false);
+        await OnApprove.InvokeAsync();
+    }
+
+    private async Task RejectAsync()
+    {
+        _decisionMade = true;
+        await SetVisibleAsync(false);
+        await OnReject.InvokeAsync();
+    }
+
+    private async Task HandleCloseAsync(BeforeCloseEventArgs args)
+    {
+        // A button already decided; this close is the programmatic hide.
+        if (_decisionMade)
+        {
+            _decisionMade = false;
+            return;
+        }
+
+        // Dismissing with the close icon is treated as a rejection, so no file
+        // can change without an explicit approval.
+        await SetVisibleAsync(false);
+        await OnReject.InvokeAsync();
+    }
+
+    private Task SetVisibleAsync(bool visible)
+    {
+        Visible = visible;
+        return VisibleChanged.InvokeAsync(visible);
+    }
+}

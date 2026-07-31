@@ -24,4 +24,19 @@ public static class GraphToolRegistration
         AIFunctionFactory.Create(tools.GetNeighbors),
         AIFunctionFactory.Create(tools.Stats),
     };
+
+    /// <summary>
+    /// Appends the two write tools to the read-only traversal tools. The
+    /// <c>/graphchat</c> page must call this overload; using the single-argument
+    /// read-only overload is a silent failure that leaves the model unable to
+    /// propose changes.
+    /// </summary>
+    public static IList<AITool> CreateTools(
+        IGraphChatTools read, IGraphWriteTools write)
+    {
+        var tools = CreateTools(read);
+        tools.Add(AIFunctionFactory.Create(write.UpdateNodeContent));
+        tools.Add(AIFunctionFactory.Create(write.UpdateTicket));
+        return tools;
+    }
 }

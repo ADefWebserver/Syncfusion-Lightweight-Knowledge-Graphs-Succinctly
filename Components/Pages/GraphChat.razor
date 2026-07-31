@@ -4,12 +4,15 @@
 @using Markdig
 @using Microsoft.Extensions.AI
 @using Syncfusion.Blazor.InteractiveChat
+@using SyncfusionHelpDesk.Components.Shared
 @using SyncfusionHelpDesk.Services.AI
 @using SyncfusionHelpDesk.Services.AI.GraphTools
+@using SyncfusionHelpDesk.Services.Graph
 @using ChatMessage = Microsoft.Extensions.AI.ChatMessage
 
 @inject IChatClient ChatClient
 @inject IGraphChatTools GraphTools
+@inject IGraphWriteTools GraphWriteTools
 
 <PageTitle>Graph Assistant</PageTitle>
 
@@ -17,8 +20,9 @@
     <Authorized>
         <h1>Graph Assistant</h1>
         <p class="text-muted">
-            Ask read-only questions about the help-desk knowledge graph. Every
-            answer is grounded in the graph data.
+            Ask questions about the help-desk knowledge graph. You can also ask to
+            update a ticket's status or description; every change is previewed and
+            must be approved before it is applied.
         </p>
 
         <div class="graphchat-view" style="height: 600px;">
@@ -26,6 +30,11 @@
                             PromptRequested="PromptRequestedAsync">
             </SfAIAssistView>
         </div>
+
+        <MutationApproval @bind-Visible="_showApproval"
+                          Preview="_pendingPreview"
+                          OnApprove="ApprovePendingAsync"
+                          OnReject="RejectPending" />
     </Authorized>
     <NotAuthorized>
         <h1>Graph Assistant</h1>
@@ -51,21 +60,37 @@
         "Show graph statistics.",
     };
 
+    private bool _showApproval;
+    private MutationPreview? _pendingPreview;
+
     private async Task PromptRequestedAsync(AssistViewPromptRequestedEventArgs args)
     {
         var responseText = await GetAssistantResponseAsync(args.Prompt);
         args.Response = Markdown.ToHtml(responseText, _markdownPipeline);
+
+        // A write tool leaves a proposal behind; surface it for approval.
+        if (GraphWriteTools.Pending is { } pending)
+        {
+            _pendingPreview = pending.Preview;
+            _showApproval = true;
+        }
     }
 
     private async Task<string> GetAssistantResponseAsync(string prompt)
     {
+        // Clear any stale proposal so an earlier turn cannot be approved by accident.
+        GraphWriteTools.ClearPending();
+
         try
         {
             _history.Add(new ChatMessage(ChatRole.User, prompt));
 
             var response = await ChatClient.GetResponseAsync(
                 _history,
-                new ChatOptions { Tools = GraphToolRegistration.CreateTools(GraphTools) });
+                new ChatOptions
+                {
+                    Tools = GraphToolRegistration.CreateTools(GraphTools, GraphWriteTools),
+                });
 
             _history.AddRange(response.Messages);
 
@@ -78,5 +103,19 @@
             return "The assistant could not complete the request. Please verify " +
                    $"the OpenAI API key is configured correctly.\n\n_{ex.Message}_";
         }
+    }
+
+    private async Task ApprovePendingAsync()
+    {
+        await GraphWriteTools.ApplyPendingAsync();
+        _pendingPreview = null;
+        _showApproval = false;
+    }
+
+    private void RejectPending()
+    {
+        GraphWriteTools.ClearPending();
+        _pendingPreview = null;
+        _showApproval = false;
     }
 }

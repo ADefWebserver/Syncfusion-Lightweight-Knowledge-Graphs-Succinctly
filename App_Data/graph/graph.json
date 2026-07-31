@@ -343,7 +343,7 @@
       "type": "Ticket",
       "label": "My computer won\u0027t start",
       "data": {
-        "status": "New",
+        "status": "Closed",
         "ticketDate": "2024-12-01T00:00:00",
         "requesterEmail": "User@email.com",
         "ticketGuid": "c61b012d-7611-4538-bdaf-5813d2cb6c19"
@@ -6089,12 +6089,6 @@
       "from": "ticket:1",
       "to": "requester:user@email.com",
       "type": "REQUESTED_BY",
-      "data": {}
-    },
-    {
-      "from": "ticket:1",
-      "to": "status:new",
-      "type": "HAS_STATUS",
       "data": {}
     },
     {
@@ -14056,6 +14050,12 @@
       "data": {
         "date": "2026-07-26T17:36:10.05"
       }
+    },
+    {
+      "from": "ticket:1",
+      "to": "status:closed",
+      "type": "HAS_STATUS",
+      "data": {}
     }
   ]
 }
