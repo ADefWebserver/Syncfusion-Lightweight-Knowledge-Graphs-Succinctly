@@ -21,7 +21,8 @@ application already has a singleton GraphStore containing Ticket, TicketDetail,
 Requester, Status, and Day nodes and REQUESTED_BY, HAS_DETAIL, HAS_STATUS, and
 OCCURRED_ON edges. The new page should answer relationship questions about this graph
 at /graphchat. Typical questions include "How many tickets has this email opened?",
-"List the open tickets," and "Show graph statistics."
+"List the open tickets," "Show the tickets that have a status of Pending," and
+"Show graph statistics."
 
 The assistant must remain strictly read-only and ground every answer in deterministic
 GraphStore traversals exposed as tools. It must never invent ticket IDs, email
@@ -62,17 +63,59 @@ the implementation, so the text the model reads and the contract the code compil
 against cannot drift apart. Any method that returns a list must accept a max argument
 to keep results from flooding the model's context window.
 
-Provide these tools: FindRequesterByEmail(query, max),
-CountTicketsForRequester(email), ListTicketsForRequester(email, status, max),
-ListDetailsForTicket(ticketId, max), SearchNodes(query, type, max), GetNode(id),
-GetNeighbors(id, edgeType, max), and Stats(). They are all read-only. Return focused
-DTOs, declared in Services/AI/GraphTools/GraphChatDtos.cs, such as NodeSummary,
-NodeDetail, Neighbor, TicketSummary, CommentSummary, RequesterSummary, and GraphStats,
-rather than raw graph nodes or database rows.
+Provide these ten tools:
 
-In Services/AI/GraphTools/GraphToolRegistration.cs, add a static
-CreateTools(IGraphChatTools) method. It should wrap every method with
-AIFunctionFactory.Create and return IList<AITool>.
+- FindRequesterByEmail(query, max)
+- CountTicketsForRequester(email)
+- ListTicketsForRequester(email, status, max)
+- ListTicketsByStatus(status, max)
+- ListStatuses()
+- ListDetailsForTicket(ticketId, max)
+- SearchNodes(query, type, max)
+- GetNode(id)
+- GetNeighbors(id, edgeType, max)
+- Stats()
+
+They are all read-only. Return focused DTOs, declared in
+Services/AI/GraphTools/GraphChatDtos.cs, rather than raw graph nodes or database rows:
+
+- NodeSummary(Id, Type, Label)
+- NodeDetail(Id, Type, Label, IReadOnlyDictionary<string, string?> Data)
+- Neighbor(EdgeType, Direction, NodeId, NodeType, NodeLabel)
+- TicketSummary(Id, Label, Status, TicketDate, RequesterEmail)
+- CommentSummary(Id, Snippet, Date)
+- RequesterSummary(Id, Email, Label)
+- StatusSummary(Id, Status, TicketCount)
+- GraphStats(TotalNodes, TotalEdges, NodesByType, EdgesByType)
+
+CRITICAL - a question of the form "list the open tickets" or "show the tickets with a
+status of Pending" must be answerable without knowing anyone's email address. An
+earlier version of this feature had no global status filter: the only status-aware
+tool was ListTicketsForRequester, which requires an email. Faced with "show the
+tickets that have a status of Pending" the model fell back to SearchNodes, which
+matches only node ids and labels and therefore returned nothing, and the assistant
+confidently answered "There are no tickets with a status of Pending in the system"
+while six such tickets existed. A missing tool became a false statement about the
+data, which is exactly the failure this design is supposed to prevent.
+
+Fix it with a traversal, not a scan. ListTicketsByStatus(status, max) should resolve
+the status node id as status:<status lowercased>, then walk that node's incoming
+HAS_STATUS edges back to the Ticket nodes on the other end. This is an O(1) dictionary
+lookup followed by a short walk, and it is the same shape as the traversal
+ListTicketsForRequester already performs over REQUESTED_BY. Do not implement it by
+scanning every Ticket node and comparing Data["status"]; the point of the graph is
+that the relationship is already indexed as an edge. If the status node does not
+exist, return an empty list rather than throwing.
+
+ListStatuses() should return one StatusSummary for every Status node, with the status
+name and the number of tickets currently carrying it, counted from the incoming
+HAS_STATUS edges. It gives the model a way to discover which status values are real,
+and a total it can report when a list has been truncated by max.
+
+SearchNodes must also match against the string values in a node's Data dictionary, not
+only its id and label, and its [Description] must say so. The old behaviour made an
+empty result indistinguishable from "the search does not look there," which is what
+misled the model in the first place.
 
 Services/AI/GraphTools/GraphSystemPrompt.cs should expose a constant prompt that
 explains the graph's node and edge types, its ID conventions, and the tools available.
@@ -81,12 +124,28 @@ FindRequesterByEmail before looking up tickets, prefer purpose-built tools over 
 generic search tools, explicitly say when a tool returns no result, and keep answers
 concise while naming the tickets or requesters it found.
 
+Add these grounding rules, which exist because of the false-negative described above:
+
+- To answer any question about tickets with a particular status, call
+  ListTicketsByStatus. Never use SearchNodes to look for a status.
+- Before stating that no tickets have a given status, call ListStatuses to confirm
+  that the status exists at all. If the status is not in that list, say the status
+  does not exist rather than saying there are no tickets.
+- When a list comes back with exactly max entries, say the result was truncated and
+  give the true total from ListStatuses or CountTicketsForRequester.
+
+In Services/AI/GraphTools/GraphToolRegistration.cs, add a static
+CreateTools(IGraphChatTools) method. It should wrap every method with
+AIFunctionFactory.Create and return IList<AITool>.
+
 The /graphchat page should inject IChatClient and IGraphChatTools and host an
-SfAIAssistView with several PromptSuggestions and a PromptRequested handler. Wrap the
-whole page in an AuthorizeView so an anonymous visitor sees a sign-in message instead
-of the assistant. Maintain a ChatMessage history initialized with a System message
-containing GraphSystemPrompt.Text. Because Syncfusion's InteractiveChat namespace also
-defines a ChatMessage type, add a using alias so ChatMessage resolves to
+SfAIAssistView with several PromptSuggestions and a PromptRequested handler. Every
+prompt suggestion must be answerable by a registered tool: if a suggestion is offered,
+a tool must exist that answers it. Wrap the whole page in an AuthorizeView so an
+anonymous visitor sees a sign-in message instead of the assistant. Maintain a
+ChatMessage history initialized with a System message containing
+GraphSystemPrompt.Text. Because Syncfusion's InteractiveChat namespace also defines a
+ChatMessage type, add a using alias so ChatMessage resolves to
 Microsoft.Extensions.AI.ChatMessage. For each submitted prompt, append the user
 message, call ChatClient.GetResponseAsync with the history and new ChatOptions whose
 Tools come from GraphToolRegistration.CreateTools(GraphTools), append
@@ -133,13 +192,24 @@ the bi bi-chat-dots-fill-nav-menu classes. Add a matching
 .bi-chat-dots-fill-nav-menu rule to NavMenu.razor.css so the icon is visibly rendered
 rather than appearing as an empty box.
 
-List acceptance criteria that verify the grounding behavior as well as the UI. Every
-factual statement must be backed by a tool result, with no fabricated IDs, counts, or
-dates. Questions about a person must resolve the email first and then report tickets.
-"Show graph statistics" must return node and edge counts from Stats(). A reply
-containing a Markdown list or table must render as a real list or table rather than as
-raw Markdown punctuation. With no API key, the page must still render and must show a
-clear error after a prompt is submitted. The application must start and serve its
-first page without throwing a dependency-injection lifetime exception; specifically,
-IChatClient must be resolvable by the singleton SyncfusionAIService. The sidebar must
-show the Graph Assistant link with its chat icon.
+List acceptance criteria that verify the grounding behavior as well as the UI, phrased
+as observable behaviour rather than as a list of files:
+
+- Every factual statement is backed by a tool result, with no fabricated IDs, counts,
+  or dates.
+- Asking "show the tickets that have a status of Pending" returns the actual Pending
+  tickets. It must not answer that none exist while Pending tickets are present in
+  graph.json. Verify this against the real data before considering the feature done.
+- Asking "list the open tickets" works without supplying an email address.
+- Every string in PromptSuggestions can be answered by a registered tool.
+- A question about a person resolves the email first and then reports tickets.
+- Asking for a status that does not exist says the status does not exist, rather than
+  reporting that no tickets have it.
+- "Show graph statistics" returns node and edge counts from Stats().
+- A reply containing a Markdown list or table renders as a real list or table rather
+  than as raw Markdown punctuation.
+- The application starts and serves its first page without throwing a
+  dependency-injection lifetime exception.
+- With no API key, the page still renders and shows a clear error after a prompt is
+  submitted.
+- The sidebar shows the Graph Assistant link with its chat icon.

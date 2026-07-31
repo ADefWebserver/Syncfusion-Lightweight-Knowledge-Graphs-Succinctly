@@ -12,6 +12,7 @@ The assistant answers relationship questions about this graph, such as:
 
 - "How many tickets has this email opened?"
 - "List the open tickets."
+- "Show the tickets that have a status of Pending."
 - "Show graph statistics."
 
 The assistant is **strictly read-only**. Every answer is grounded in
@@ -55,12 +56,9 @@ behind `IChatClient`.
   `DefaultModel` constant when `Model` is absent.
 - OpenAI is the only supported AI provider; there is no provider selector.
 - Finishes the pipeline with
-  `.AsBuilder().UseFunctionInvocation().Build()` so tool calls are handled
-  automatically during a chat request.
+  `.AsBuilder().UseFunctionInvocation().Build()`.
 
 ### 3.1 Use the Responses API, not Chat Completions
-
-The client is built from the OpenAI **Responses** endpoint:
 
 ```csharp
 #pragma warning disable OPENAI001
@@ -70,24 +68,19 @@ IChatClient chatClient = new OpenAIClient(apiKey)
 #pragma warning restore OPENAI001
 ```
 
-This is not a stylistic choice. Reasoning models such as the gpt-5 family
-reject function tools on `/v1/chat/completions` but accept them on
-`/v1/responses`. Because a tool-calling assistant is the entire point of this
-feature, the Responses endpoint is required for any current model. The
-Responses client is still marked experimental in the OpenAI SDK, which is why
-the `OPENAI001` warning is suppressed at the call site with a comment naming
-the reason.
+Reasoning models such as the gpt-5 family reject function tools on
+`/v1/chat/completions` but accept them on `/v1/responses`. Because a
+tool-calling assistant is the entire point of this feature, the Responses
+endpoint is required. The Responses client is still experimental in the OpenAI
+SDK, which is why `OPENAI001` is suppressed at the call site with a comment.
 
 ### 3.2 Missing key is not a startup failure
 
-A configured API key is **not** a startup requirement. When `ApiKey` is empty,
-substitute a placeholder string so construction does not throw. The application
-and the chat page then load normally, and the first real request fails with a
-clear authentication message that the page surfaces.
+When `ApiKey` is empty, substitute a placeholder so construction does not throw.
+The application and chat page load normally, and the first real request fails
+with a clear authentication message the page surfaces.
 
 ### 3.3 One configuration section
-
-The `"AI"` section is the single AI configuration for the whole application:
 
 ```json
 "AI": { "ApiKey": "", "Model": "gpt-5.6-sol" }
@@ -95,27 +88,14 @@ The `"AI"` section is the single AI configuration for the whole application:
 
 There is **no** separate `"OpenAI"` section. `Program.cs` reads `AI:ApiKey` and
 `AI:Model` directly to register the Syncfusion Smart Components inference
-service, and only when the key is non-empty. One section feeds two consumers;
-do not reintroduce a second key.
-
-```mermaid
-flowchart TD
-    Read[Read AI section] --> Key{ApiKey empty}
-    Key -- Yes --> Placeholder[Substitute placeholder key]
-    Key -- No --> Real[Use configured key]
-    Placeholder --> Responses[GetResponsesClient AsIChatClient model]
-    Real --> Responses
-    Responses --> Builder[AsBuilder UseFunctionInvocation Build]
-    Builder --> Client[Return IChatClient]
-```
+service, and only when the key is non-empty.
 
 ## 4. Read-Only Tool Contract
 
 Define the contract in `Services/AI/GraphTools/IGraphChatTools.cs` and implement
 it in `GraphChatTools.cs`. Every method performs a deterministic `GraphStore`
 traversal and carries a `[Description]` attribute so its signature becomes the
-tool schema. Any method returning a list accepts a `max` argument to keep
-results from flooding the model's context window.
+tool schema. Any method returning a list accepts a `max` argument.
 
 The `[Description]` attributes live on the **interface**, not the
 implementation, so the text the model reads and the contract the code compiles
@@ -123,57 +103,131 @@ against cannot drift apart.
 
 | Tool | Parameters | Returns | Traversal |
 | --- | --- | --- | --- |
-| FindRequesterByEmail | `query`, `max` | `IList<RequesterSummary>` | Scans `NodesOfType("Requester")`, case-insensitive contains on the email key |
+| FindRequesterByEmail | `query`, `max` | `IList<RequesterSummary>` | Scans `NodesOfType("Requester")`, case-insensitive contains on the email |
 | CountTicketsForRequester | `email` | `int` | Resolves `requester:<email>`, counts `InEdges` of type REQUESTED_BY |
-| ListTicketsForRequester | `email`, `status`, `max` | `IList<TicketSummary>` | REQUESTED_BY `InEdges` of the requester, optionally filtered by the ticket's status property |
-| ListDetailsForTicket | `ticketId`, `max` | `IList<CommentSummary>` | HAS_DETAIL `OutEdges` of the ticket to TicketDetail nodes |
-| SearchNodes | `query`, `type`, `max` | `IList<NodeSummary>` | Filters nodes by label/id contains, optional type filter |
+| ListTicketsForRequester | `email`, `status`, `max` | `IList<TicketSummary>` | REQUESTED_BY `InEdges` of the requester, optionally filtered by status |
+| **ListTicketsByStatus** | `status`, `max` | `IList<TicketSummary>` | Resolves `status:<status>`, walks its **incoming HAS_STATUS edges** back to Tickets |
+| **ListStatuses** | (none) | `IList<StatusSummary>` | Every Status node, with its incoming HAS_STATUS edge count |
+| ListDetailsForTicket | `ticketId`, `max` | `IList<CommentSummary>` | HAS_DETAIL `OutEdges` of the ticket |
+| SearchNodes | `query`, `type`, `max` | `IList<NodeSummary>` | Filters nodes by id, label, **or Data value**, optional type filter |
 | GetNode | `id` | `NodeDetail` | `GraphStore.GetNode(id)` |
-| GetNeighbors | `id`, `edgeType`, `max` | `IList<Neighbor>` | `OutEdges` and `InEdges` of the node, optionally filtered by edge type |
-| Stats | (none) | `GraphStats` | Counts nodes by type and edges by type from `GraphStore` |
+| GetNeighbors | `id`, `edgeType`, `max` | `IList<Neighbor>` | `OutEdges` and `InEdges`, optionally filtered by edge type |
+| Stats | (none) | `GraphStats` | Node and edge counts by type |
 
-All eight tools are read-only. They return focused DTOs declared in
-`Services/AI/GraphTools/GraphChatDtos.cs` (`NodeSummary`, `NodeDetail`,
-`Neighbor`, `TicketSummary`, `CommentSummary`, `RequesterSummary`,
-`GraphStats`) rather than raw graph nodes or database rows.
+### 4.1 DTOs
 
-### 4.1 Tool Registration
+Declared in `Services/AI/GraphTools/GraphChatDtos.cs`:
 
-In `Services/AI/GraphTools/GraphToolRegistration.cs`, add a static
-`IList<AITool> CreateTools(IGraphChatTools tools)` that wraps every method with
-`AIFunctionFactory.Create` and returns the list.
+```csharp
+public sealed record NodeSummary(string Id, string Type, string Label);
+public sealed record NodeDetail(string Id, string Type, string Label,
+    IReadOnlyDictionary<string, string?> Data);
+public sealed record Neighbor(string EdgeType, string Direction,
+    string NodeId, string NodeType, string NodeLabel);
+public sealed record TicketSummary(string Id, string Label, string? Status,
+    string? TicketDate, string? RequesterEmail);
+public sealed record CommentSummary(string Id, string? Snippet, string? Date);
+public sealed record RequesterSummary(string Id, string Email, string Label);
+public sealed record StatusSummary(string Id, string Status, int TicketCount);
+public sealed record GraphStats(int TotalNodes, int TotalEdges,
+    IReadOnlyDictionary<string, int> NodesByType,
+    IReadOnlyDictionary<string, int> EdgesByType);
+```
+
+### 4.2 Why ListTicketsByStatus exists
+
+> **A missing tool becomes a false statement about the data.**
+
+An earlier version of this feature had no global status filter. The only
+status-aware tool was `ListTicketsForRequester`, which requires an email
+address. Asked *"show the tickets that have a status of Pending"*, the model had
+no tool that fit, fell back to `SearchNodes`, and got nothing — because
+`SearchNodes` matched only node ids and labels, and a ticket's status lives in
+its `Data` dictionary and on its `HAS_STATUS` edge.
+
+The assistant then answered:
+
+> There are no tickets with a status of Pending in the system.
+
+Six Pending tickets existed. Nothing in the pipeline was lying; the model
+reported an empty tool result faithfully. The gap was that no tool could express
+the question, and an empty result was indistinguishable from "the search does
+not look there."
+
+Three changes close it:
+
+1. `ListTicketsByStatus` gives the question a tool.
+2. `ListStatuses` lets the model check whether a status exists before denying
+   it.
+3. `SearchNodes` now also matches `Data` values, and says so in its description.
+
+### 4.3 Implement it as a traversal, not a scan
+
+`ListTicketsByStatus(status, max)` resolves `status:<status lowercased>`, then
+walks that node's **incoming HAS_STATUS edges** back to the Ticket nodes:
+
+```mermaid
+flowchart LR
+    Q[status Pending] --> Id[Resolve id status colon pending]
+    Id --> Node[GraphStore GetNode]
+    Node --> In[InEdges filtered to HAS_STATUS]
+    In --> Tickets[Ticket nodes on the From side]
+    Tickets --> Dto[TicketSummary list]
+```
+
+This is an O(1) dictionary lookup followed by a short walk, the same shape as
+the REQUESTED_BY traversal `ListTicketsForRequester` already performs.
+
+Do **not** implement it by scanning every Ticket node and comparing
+`Data["status"]`. The relationship is already indexed as an edge; walking it is
+the entire reason the graph exists. A scan would also drift from the edge if the
+two ever disagreed.
+
+If the status node does not exist, return an empty list rather than throwing.
+`ListStatuses` is what distinguishes "no such status" from "no tickets".
 
 ## 5. System Prompt
 
-`Services/AI/GraphTools/GraphSystemPrompt.cs` exposes a constant `Text` prompt.
-It explains the graph's node and edge types, the ID conventions
-(`<type>:<key>`), and the available tools. The grounding rules instruct the
-model to:
+`Services/AI/GraphTools/GraphSystemPrompt.cs` exposes a constant `Text` prompt
+describing the node and edge types, the `<type>:<key>` id conventions, and the
+available tools. Grounding rules:
 
-- Derive every number from tool results (never guess counts, IDs, dates, or
-  statuses).
+- Derive every number from tool results; never guess counts, IDs, dates, or
+  statuses.
 - Resolve people with `FindRequesterByEmail` **before** looking up tickets.
-- Prefer purpose-built tools (for example `CountTicketsForRequester`,
-  `ListTicketsForRequester`) over the generic `SearchNodes`/`GetNode` tools.
+- Prefer purpose-built tools over the generic `SearchNodes`/`GetNode`.
 - Explicitly say when a tool returns no result.
-- Keep answers concise while naming the tickets or requesters it found.
+- Keep answers concise while naming the tickets or requesters found.
+
+Plus three rules that exist because of the false negative in section 4.2:
+
+- To answer any question about tickets with a particular status, call
+  `ListTicketsByStatus`. **Never** use `SearchNodes` to look for a status.
+- Before stating that no tickets have a given status, call `ListStatuses` to
+  confirm the status exists at all. If it is not in that list, say the status
+  does not exist rather than that no tickets have it.
+- When a list comes back with exactly `max` entries, say the result was
+  truncated and give the true total from `ListStatuses` or
+  `CountTicketsForRequester`.
 
 ## 6. GraphChat.razor Page
 
 - `@page "/graphchat"`, `@rendermode InteractiveServer`.
 - `@inject IChatClient ChatClient`, `@inject IGraphChatTools GraphTools`.
-- The whole page sits inside an `<AuthorizeView>`; an anonymous visitor sees a
-  sign-in message instead of the assistant.
-- Hosts an `SfAIAssistView` with several `PromptSuggestions` (for example the
-  three example questions) and a `PromptRequested` handler.
-- Maintains a `List<ChatMessage>` history initialized with a `System` message
+- Wrapped in `<AuthorizeView>`; anonymous visitors get a sign-in message.
+- Hosts an `SfAIAssistView` with `PromptSuggestions` and a `PromptRequested`
+  handler.
+- Maintains a `List<ChatMessage>` history seeded with a `System` message
   containing `GraphSystemPrompt.Text`.
+
+> **Every prompt suggestion must be answerable by a registered tool.** The
+> suggestion "List the open tickets." shipped in an earlier version that had no
+> tool capable of answering it. If a suggestion is offered, a tool must exist
+> that answers it.
 
 ### 6.1 The ChatMessage name collision
 
-Syncfusion's `Syncfusion.Blazor.InteractiveChat` namespace also defines a
-`ChatMessage` type, so an unqualified `ChatMessage` is ambiguous. Add a using
-alias at the top of the page:
+`Syncfusion.Blazor.InteractiveChat` also defines a `ChatMessage`, so add:
 
 ```razor
 @using ChatMessage = Microsoft.Extensions.AI.ChatMessage
@@ -181,21 +235,16 @@ alias at the top of the page:
 
 ### 6.2 The request cycle
 
-Per submitted prompt:
-
 1. Append the user message to history.
 2. Call `ChatClient.GetResponseAsync(history, new ChatOptions { Tools = GraphToolRegistration.CreateTools(GraphTools) })`.
 3. Append `response.Messages` to history.
-4. Return `response.Text` (supply a friendly fallback if the text is empty).
-5. Catch request failures and tell the user to verify the OpenAI API key in the
-   `"AI"` configuration section.
+4. Return `response.Text`, with a friendly fallback if empty.
+5. Catch failures and tell the user to verify the OpenAI API key.
 
 ### 6.3 Rendering the model's Markdown
 
-`SfAIAssistView` renders its response as HTML, but the model replies in
-Markdown. Assigning the raw text shows literal asterisks and pipe characters
-instead of lists and tables. Add a **Markdig** package reference and convert the
-text at the moment it is handed to the component:
+`SfAIAssistView` renders HTML, but the model replies in Markdown. Add **Markdig**
+and convert at the edge:
 
 ```csharp
 private static readonly MarkdownPipeline _markdownPipeline = new MarkdownPipelineBuilder()
@@ -209,16 +258,13 @@ private async Task PromptRequestedAsync(AssistViewPromptRequestedEventArgs args)
 }
 ```
 
-Build the pipeline once as a static field rather than per request. Keep the
-conversion at the very edge of the component: the chat history stores the
-model's original Markdown, and only the displayed string is HTML. Separating
-`PromptRequestedAsync` (presentation) from `GetAssistantResponseAsync`
-(the model round trip) keeps that boundary obvious.
+Build the pipeline once as a static field. The history stores the model's
+original Markdown; only the displayed string is HTML.
 
 ```mermaid
 flowchart TD
     Submit[Prompt submitted] --> AddUser[Append user message]
-    AddUser --> Call[ChatClient GetResponseAsync with tools]
+    AddUser --> Call[GetResponseAsync with tools]
     Call --> Invoke[Automatic function invocation runs GraphStore tools]
     Invoke --> Resp[Assistant response in Markdown]
     Resp --> AddAsst[Append response messages to history]
@@ -232,24 +278,13 @@ flowchart TD
 
 ## 7. Navigation Link
 
-Add a **Graph Assistant** link to the left sidebar inside the `<Authorized>`
-block in `Components/Layout/NavMenu.razor`:
-
-```razor
-<div class="nav-item px-3">
-    <NavLink class="nav-link" href="graphchat">
-        <span class="bi bi-chat-dots-fill-nav-menu" aria-hidden="true"></span> Graph Assistant
-    </NavLink>
-</div>
-```
-
-Add a matching `.bi-chat-dots-fill-nav-menu` rule to `NavMenu.razor.css` (using
-the same embedded-SVG background pattern as the other `.bi-*-nav-menu` rules) so
-the chat icon renders instead of an empty box.
+Add a **Graph Assistant** link inside the `<Authorized>` block in
+`Components/Layout/NavMenu.razor`, and a matching
+`.bi-chat-dots-fill-nav-menu` rule in `NavMenu.razor.css` using the same
+embedded-SVG background pattern as the other `.bi-*-nav-menu` rules, so the icon
+renders instead of an empty box.
 
 ## 8. Program.cs Wiring
-
-Register the chat client as a **singleton**:
 
 ```csharp
 builder.Services.AddSingleton<IChatClient>(sp =>
@@ -262,19 +297,16 @@ builder.Services.AddScoped<IGraphChatTools, GraphChatTools>();
 
 Syncfusion's `SyncfusionAIService` is registered as a singleton, and in ASP.NET
 Core a singleton cannot consume a scoped service. Registering `IChatClient` as
-scoped makes the application throw at start-up, before it serves a single page:
+scoped makes the application throw at start-up:
 
 ```text
 Cannot consume scoped service 'Microsoft.Extensions.AI.IChatClient' from singleton
 'Syncfusion.Blazor.SmartComponents.SyncfusionAIService'.
 ```
 
-The singleton lifetime is safe because the client `ChatClientFactory.Create`
-returns holds no per-request state and is thread-safe.
-
-The general rule, which applies to anything else these AI services consume: a
-singleton consumer forces every dependency it touches to be a singleton or a
-transient, never a scoped service.
+The singleton lifetime is safe because the client holds no per-request state and
+is thread-safe. The general rule: a singleton consumer forces every dependency it
+touches to be a singleton or a transient, never a scoped service.
 
 | Service | Lifetime | Why |
 | --- | --- | --- |
@@ -283,37 +315,26 @@ transient, never a scoped service.
 | `GraphStore` | Singleton | Holds the loaded graph for the process |
 | `HelpDeskGraphBuilder` | Scoped | Consumes a database context |
 
-Smart Components are wired from the same `"AI"` section, and only when a key is
-present:
-
-```csharp
-var openAIApiKey = builder.Configuration["AI:ApiKey"];
-if (!string.IsNullOrWhiteSpace(openAIApiKey))
-{
-    var openAIModel = builder.Configuration["AI:Model"] ?? "gpt-4o-mini";
-    IChatClient openAIChatClient = new OpenAI.Chat.ChatClient(openAIModel, openAIApiKey)
-        .AsIChatClient();
-
-    builder.Services.AddChatClient(openAIChatClient);
-    builder.Services.AddSyncfusionSmartComponents()
-        .InjectOpenAIInference();
-}
-```
-
 ## 9. Acceptance Criteria
 
-- Every factual statement in an answer is backed by a tool result, with no
-  fabricated IDs, counts, statuses, or dates.
+Phrased as observable behaviour, not as a list of files to create.
+
+- Every factual statement is backed by a tool result, with no fabricated IDs,
+  counts, statuses, or dates.
+- **Asking "show the tickets that have a status of Pending" returns the actual
+  Pending tickets.** It must not answer that none exist while Pending tickets are
+  present in `graph.json`. Verify against the real data before considering the
+  feature done.
+- **Asking "list the open tickets" works without supplying an email address.**
+- **Every string in `PromptSuggestions` can be answered by a registered tool.**
 - A question about a person resolves the email with `FindRequesterByEmail`
   first, then reports tickets.
+- Asking for a status that does not exist says so, rather than reporting that no
+  tickets have it.
 - "Show graph statistics" returns node and edge counts from `Stats()`.
-- A reply containing a Markdown list or table renders as a real list or table,
-  not as raw Markdown punctuation.
-- The application starts and serves its first page without throwing a
-  dependency-injection lifetime exception; `IChatClient` is resolvable by the
-  singleton `SyncfusionAIService`.
-- With no API key configured, the page still renders and shows a clear error
-  after a prompt is submitted.
-- The sidebar shows the Graph Assistant link with its chat-dots icon visibly
-  rendered.
+- A reply containing a Markdown list or table renders as a real list or table.
+- The application starts and serves its first page without a
+  dependency-injection lifetime exception.
+- With no API key, the page renders and shows a clear error after a prompt.
+- The sidebar shows the Graph Assistant link with its chat-dots icon.
 - The assistant remains strictly read-only; no tool mutates the graph.
