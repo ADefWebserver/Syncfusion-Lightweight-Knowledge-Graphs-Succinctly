@@ -10,6 +10,8 @@ using SyncfusionHelpDesk.Components.Account;
 using SyncfusionHelpDesk.Data;
 using SyncfusionHelpDesk.Graph;
 using SyncfusionHelpDesk.Models;
+using SyncfusionHelpDesk.Services.AI;
+using SyncfusionHelpDesk.Services.AI.GraphTools;
 
 namespace SyncfusionHelpDesk
 {
@@ -56,14 +58,17 @@ namespace SyncfusionHelpDesk
             var openAIApiKey = builder.Configuration["AI:ApiKey"];
             if (!string.IsNullOrWhiteSpace(openAIApiKey))
             {
-                var openAIModel = builder.Configuration["AI:Model"] ?? "gpt-4o-mini";
-                IChatClient openAIChatClient = new OpenAI.Chat.ChatClient(openAIModel, openAIApiKey)
-                    .AsIChatClient();
+                // Singleton lifetime is required: the singleton SyncfusionAIService
+                // consumes IChatClient, and a singleton cannot depend on a scoped
+                // service. The client is stateless and thread-safe.
+                builder.Services.AddSingleton<IChatClient>(sp =>
+                    ChatClientFactory.Create(builder.Configuration.GetSection("AI")));
 
-                builder.Services.AddChatClient(openAIChatClient);
                 builder.Services.AddSyncfusionSmartComponents()
                     .InjectOpenAIInference();
             }
+
+            builder.Services.AddScoped<IGraphChatTools, GraphChatTools>();
 
             // Get SYNCFUSION_APIKEY from appsettings.json
             var SyncfusionApiKey = builder.Configuration["SYNCFUSION_APIKEY"];

@@ -1,0 +1,82 @@
+@page "/graphchat"
+@rendermode InteractiveServer
+
+@using Markdig
+@using Microsoft.Extensions.AI
+@using Syncfusion.Blazor.InteractiveChat
+@using SyncfusionHelpDesk.Services.AI
+@using SyncfusionHelpDesk.Services.AI.GraphTools
+@using ChatMessage = Microsoft.Extensions.AI.ChatMessage
+
+@inject IChatClient ChatClient
+@inject IGraphChatTools GraphTools
+
+<PageTitle>Graph Assistant</PageTitle>
+
+<AuthorizeView>
+    <Authorized>
+        <h1>Graph Assistant</h1>
+        <p class="text-muted">
+            Ask read-only questions about the help-desk knowledge graph. Every
+            answer is grounded in the graph data.
+        </p>
+
+        <div class="graphchat-view" style="height: 600px;">
+            <SfAIAssistView PromptSuggestions="@_promptSuggestions"
+                            PromptRequested="PromptRequestedAsync">
+            </SfAIAssistView>
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        <h1>Graph Assistant</h1>
+        <p>Please <a href="Account/Login">sign in</a> to use the Graph Assistant.</p>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private static readonly MarkdownPipeline _markdownPipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .Build();
+
+    private readonly List<ChatMessage> _history = new()
+    {
+        new ChatMessage(ChatRole.System, GraphSystemPrompt.Text),
+    };
+
+    private readonly List<string> _promptSuggestions = new()
+    {
+        "Show the tickets that have a status of Pending.",
+        "List the open tickets.",
+        "List every status and how many tickets have each.",
+        "Show graph statistics.",
+    };
+
+    private async Task PromptRequestedAsync(AssistViewPromptRequestedEventArgs args)
+    {
+        var responseText = await GetAssistantResponseAsync(args.Prompt);
+        args.Response = Markdown.ToHtml(responseText, _markdownPipeline);
+    }
+
+    private async Task<string> GetAssistantResponseAsync(string prompt)
+    {
+        try
+        {
+            _history.Add(new ChatMessage(ChatRole.User, prompt));
+
+            var response = await ChatClient.GetResponseAsync(
+                _history,
+                new ChatOptions { Tools = GraphToolRegistration.CreateTools(GraphTools) });
+
+            _history.AddRange(response.Messages);
+
+            return string.IsNullOrWhiteSpace(response.Text)
+                ? "I could not find an answer to that in the graph."
+                : response.Text;
+        }
+        catch (Exception ex)
+        {
+            return "The assistant could not complete the request. Please verify " +
+                   $"the OpenAI API key is configured correctly.\n\n_{ex.Message}_";
+        }
+    }
+}
