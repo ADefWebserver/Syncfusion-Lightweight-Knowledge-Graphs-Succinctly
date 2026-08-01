@@ -2,6 +2,9 @@
 
 ![screenshot](https://github.com/user-attachments/assets/1af12cac-da3a-4f9d-8298-dfe0a2d9d9ea)
 
+<img width="970" height="690" alt="image" src="https://github.com/user-attachments/assets/6f91eeb5-7dd6-42a8-a0b0-861903662326" />
+
+
 ## Covered in the Book:
 [Blazor Succinctly](https://www.syncfusion.com/ebooks/blazor-succinctly)
 
